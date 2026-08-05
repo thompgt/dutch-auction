@@ -33,7 +33,11 @@ fn clearing_reprices_earlier_fills_down_to_the_clearing_price() {
     // Alice's fill was repriced from 1000 down to 500 — she is not punished for going first.
     assert!(h.events.iter().any(|e| matches!(
         e,
-        Event::Repriced { from: Price(1000), to: Price(500), .. }
+        Event::Repriced {
+            from: Price(1000),
+            to: Price(500),
+            ..
+        }
     )));
     for f in h.state.fills() {
         assert_eq!(f.price, Price(500));
@@ -110,7 +114,10 @@ fn a_resting_bid_fires_when_the_clock_reaches_it_and_not_before() {
     h.fund(1, 100_000);
 
     h.rest(Nanos::ZERO, 1, 1, 6, 900);
-    assert_eq!(h.state.outcome(key(1)), Some(Outcome::Resting { qty: Qty(6) }));
+    assert_eq!(
+        h.state.outcome(key(1)),
+        Some(Outcome::Resting { qty: Qty(6) })
+    );
 
     // At 5s the clock is 950 — still above the limit.
     h.tick(Nanos::from_secs(5));
@@ -220,7 +227,10 @@ fn a_bid_beyond_a_participants_collateral_is_refused() {
     h.fund(1, 5_000); // enough for 5 units at 1000, not 6
 
     h.take(Nanos::ZERO, 1, 1, 6);
-    assert_eq!(h.rejection_for(1), Some(RejectReason::InsufficientCollateral));
+    assert_eq!(
+        h.rejection_for(1),
+        Some(RejectReason::InsufficientCollateral)
+    );
 
     h.take(Nanos::ZERO, 1, 2, 5);
     assert_eq!(h.filled_by(1), 5);
@@ -228,7 +238,10 @@ fn a_bid_beyond_a_participants_collateral_is_refused() {
 
     // Fully committed, so even one more unit is refused.
     h.take(Nanos::ZERO, 1, 3, 1);
-    assert_eq!(h.rejection_for(3), Some(RejectReason::InsufficientCollateral));
+    assert_eq!(
+        h.rejection_for(3),
+        Some(RejectReason::InsufficientCollateral)
+    );
     h.assert_invariants();
 }
 

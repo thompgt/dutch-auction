@@ -11,9 +11,7 @@
 
 use std::collections::BTreeMap;
 
-use auction_proto::{
-    IdempotencyKey, Nanos, ParticipantId, Price, Qty, RejectReason, Seq, Status,
-};
+use auction_proto::{IdempotencyKey, Nanos, ParticipantId, Price, Qty, RejectReason, Seq, Status};
 
 use crate::command::{BidKind, Command};
 use crate::config::AuctionConfig;
@@ -125,7 +123,10 @@ impl AuctionState {
         self.outcomes.get(&key).copied()
     }
     pub fn collateral_of(&self, participant: ParticipantId) -> Collateral {
-        self.collateral.get(&participant).copied().unwrap_or_default()
+        self.collateral
+            .get(&participant)
+            .copied()
+            .unwrap_or_default()
     }
     /// Units allocated so far. Never exceeds `total_supply` (invariant I1).
     pub fn total_filled(&self) -> Qty {
@@ -135,7 +136,8 @@ impl AuctionState {
     }
     /// The clock price right now.
     pub fn price(&self) -> Price {
-        self.clearing_price.unwrap_or_else(|| self.config.price_at(self.now))
+        self.clearing_price
+            .unwrap_or_else(|| self.config.price_at(self.now))
     }
 
     // ---------------------------------------------------------------- apply
@@ -226,7 +228,13 @@ impl AuctionState {
                 // The participant is entitled to be wrong about the price and find out for free,
                 // rather than be filled at a price they never agreed to.
                 if clock.abs_diff(expected_price) > self.config.price_tolerance {
-                    self.reject(key, RejectReason::PriceMoved { server_price: clock }, ev);
+                    self.reject(
+                        key,
+                        RejectReason::PriceMoved {
+                            server_price: clock,
+                        },
+                        ev,
+                    );
                     return;
                 }
                 let (index, price) = self.window_bounds(ts);
@@ -263,7 +271,13 @@ impl AuctionState {
                 if limit > clock {
                     // The clock is already below this limit, so it is a market take wearing a
                     // disguise — and one that would skip the tolerance check. Say so instead.
-                    self.reject(key, RejectReason::LimitAboveClock { server_price: clock }, ev);
+                    self.reject(
+                        key,
+                        RejectReason::LimitAboveClock {
+                            server_price: clock,
+                        },
+                        ev,
+                    );
                     return;
                 }
                 if !self.reserve(participant, limit, qty) {

@@ -95,7 +95,11 @@ impl PriceLadder {
     ///
     /// Linear in ladder size. Cancellation is a rare, human-speed operation, and paying for a
     /// secondary index on every insert to speed it up would tax the path that actually matters.
-    pub fn remove(&mut self, participant: ParticipantId, key: IdempotencyKey) -> Option<RestingBid> {
+    pub fn remove(
+        &mut self,
+        participant: ParticipantId,
+        key: IdempotencyKey,
+    ) -> Option<RestingBid> {
         let mut found = None;
         for level in self.levels.values_mut() {
             if let Some(pos) = level

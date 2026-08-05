@@ -7,9 +7,7 @@
 #![allow(dead_code)] // each test file uses a different subset
 
 use auction_core::{AuctionConfig, AuctionState, Command, Event, PriceSchedule};
-use auction_proto::{
-    IdempotencyKey, Nanos, ParticipantId, Price, Qty, RejectReason, Seq, Status,
-};
+use auction_proto::{IdempotencyKey, Nanos, ParticipantId, Price, Qty, RejectReason, Seq, Status};
 use uuid::Uuid;
 
 pub fn participant(n: u128) -> ParticipantId {
@@ -162,9 +160,15 @@ impl Harness {
 
         // I2 — a cleared auction has exactly one price, and it is the clearing price.
         if s.status() == Status::Cleared {
-            let clearing = s.clearing_price().expect("cleared without a clearing price");
+            let clearing = s
+                .clearing_price()
+                .expect("cleared without a clearing price");
             for f in s.fills() {
-                assert_eq!(f.price, clearing, "I2 violated: fill {} kept its own price", f.id);
+                assert_eq!(
+                    f.price, clearing,
+                    "I2 violated: fill {} kept its own price",
+                    f.id
+                );
             }
         }
 

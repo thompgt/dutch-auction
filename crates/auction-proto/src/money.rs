@@ -21,7 +21,9 @@ impl Price {
     /// Returns `None` on overflow rather than wrapping or panicking — an overflow here is a
     /// nonsense order, and the caller rejects it as such instead of the engine dying mid-auction.
     pub fn checked_mul_qty(self, qty: Qty) -> Option<i64> {
-        i64::try_from(qty.0).ok().and_then(|q| self.0.checked_mul(q))
+        i64::try_from(qty.0)
+            .ok()
+            .and_then(|q| self.0.checked_mul(q))
     }
 
     /// Clamp into `[floor, start]`. Used by the price clock, which must never emit a price

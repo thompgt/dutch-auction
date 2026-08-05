@@ -46,15 +46,31 @@ deploy/               Docker, compose, k8s manifests, Grafana dashboards
 
 ## Status
 
-Phase 0 (repository, spec, invariants) — in progress. See the workplan for the phase sequence.
+| Phase | State |
+|---|---|
+| 0 — repository, spec, invariants | done |
+| 1 — `auction-core` state machine | done |
+| 2 — `auction-wal` durability and replay | next |
+| 3 — `auction-engine` sequencer, threading, replication | |
+| 4 — `auction-gateway` network edge | |
+| 5 — `auction-projector` + Postgres | |
+| 6 — frontend | |
+| 7 — observability and load testing | |
+| 8 — HA, hardening, delivery | |
+
+`auction-core` implements the full mechanism: the price clock, both bid types, the resting-bid
+ladder, batch-window matching with pro-rata allocation at the marginal price, and uniform
+clearing with retroactive repricing. Invariants I1, I2, I3, I5, I7, I9 and I10 are asserted by
+the property suite; I4 is asserted by the engine itself on every apply.
 
 ## Development
 
 Requires a Rust toolchain (stable) and Node 22+.
 
 ```sh
-cargo test                                  # unit + property tests
-cargo clippy --all-targets -- -D warnings
+cargo test --workspace                            # unit, scenario, and property tests
+cargo bench -p auction-core --bench apply         # hot-path latency, see docs/slo.md
+cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all
 ```
 

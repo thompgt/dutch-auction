@@ -22,7 +22,11 @@ const COLLATERAL: i64 = 50_000;
 #[derive(Debug, Clone, Copy)]
 enum Op {
     /// A market take, with a deliberate error in the client's idea of the price.
-    Take { who: u128, qty: u64, price_error: i64 },
+    Take {
+        who: u128,
+        qty: u64,
+        price_error: i64,
+    },
     /// A resting bid `below` minor units under the current clock.
     Rest { who: u128, qty: u64, below: i64 },
     /// Withdraw the bid submitted by op number `which` — which may not exist.

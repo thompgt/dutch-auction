@@ -49,7 +49,10 @@ impl PriceSchedule {
         step_duration: Nanos,
         step_size: i64,
     ) -> Self {
-        assert!(floor_price <= start_price, "floor price exceeds start price");
+        assert!(
+            floor_price <= start_price,
+            "floor price exceeds start price"
+        );
         assert!(step_size >= 0, "step size must be non-negative");
         Self {
             start_price,
@@ -63,7 +66,10 @@ impl PriceSchedule {
 
     /// A linear schedule. Panics if `floor > start`, which is a malformed auction.
     pub fn linear(start_price: Price, floor_price: Price, rate_per_sec: i64) -> Self {
-        assert!(floor_price <= start_price, "floor price exceeds start price");
+        assert!(
+            floor_price <= start_price,
+            "floor price exceeds start price"
+        );
         assert!(rate_per_sec >= 0, "decay rate must be non-negative");
         Self {
             start_price,

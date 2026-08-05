@@ -119,11 +119,7 @@ pub enum Event {
     },
     /// A fill was repriced down to the clearing price. Emitted at clearing, per fill, so the
     /// record is never in a state where fills disagree about price.
-    Repriced {
-        id: FillId,
-        from: Price,
-        to: Price,
-    },
+    Repriced { id: FillId, from: Price, to: Price },
     /// Supply was exhausted, or the clock reached the floor. The auction is over.
     Cleared {
         price: Price,
