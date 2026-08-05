@@ -25,7 +25,7 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use auction_proto::Seq;
-use crossbeam_channel::{Receiver, RecvTimeoutError, Sender};
+use crossbeam_channel::{Receiver, Sender, TryRecvError};
 use parking_lot::{Condvar, Mutex};
 
 use crate::error::{Result, WalError};
@@ -210,10 +210,23 @@ fn run(mut wal: Wal, rx: Receiver<Msg>, watermark: Arc<Watermark>, options: WalO
         // Linger, gathering whatever else shows up. The deadline is absolute rather than
         // per-message so a steady trickle cannot extend the window indefinitely — the tail is
         // bounded by `linger`, not by the arrival pattern.
+        //
+        // The linger is spun, not slept, and that is not a micro-optimisation. A timed park
+        // rounds up to the operating system's timer granularity — ~15.6 ms on stock Windows,
+        // and a millisecond or more on many Linux configurations — so asking to wait 500 µs
+        // buys a 13 ms wait, which is the entire p99 budget spent on a sleep that was supposed
+        // to be sub-millisecond. Measured: `group_commit/1` went from 13.6 ms to well under
+        // one, and batches of 16 and 256 were paying exactly the same 13 ms, which is the
+        // giveaway that the cost was a timer rather than the disk.
+        //
+        // The cost is one core busy for at most `linger` per batch, and only while there is
+        // work in flight — the outer `recv()` above is a genuine block, so an idle auction
+        // still spins on nothing. For a venue whose product is the tail, that is the right side
+        // of the trade.
         let deadline = Instant::now() + options.linger;
         let mut stopping = false;
         while batch.len() < options.max_batch {
-            match rx.recv_deadline(deadline) {
+            match rx.try_recv() {
                 Ok(Msg::Record(record)) => batch.push(record),
                 // Stop *after* this batch: these records were submitted before the stop and
                 // their submitters may already be waiting on them.
@@ -221,7 +234,13 @@ fn run(mut wal: Wal, rx: Receiver<Msg>, watermark: Arc<Watermark>, options: WalO
                     stopping = true;
                     break;
                 }
-                Err(RecvTimeoutError::Timeout) | Err(RecvTimeoutError::Disconnected) => break,
+                Err(TryRecvError::Disconnected) => break,
+                Err(TryRecvError::Empty) => {
+                    if Instant::now() >= deadline {
+                        break;
+                    }
+                    std::hint::spin_loop();
+                }
             }
         }
 
