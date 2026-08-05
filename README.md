@@ -28,6 +28,18 @@ regulator-grade audit trail for free. Postgres is a downstream projection, never
 | [docs/auction-rules.md](docs/auction-rules.md) | Exact auction mechanics: the clock, bid types, clearing, repricing, fairness |
 | [docs/invariants.md](docs/invariants.md) | Properties the engine must never violate — the source of the property-test suite |
 | [docs/slo.md](docs/slo.md) | The latency budget and the acceptance criteria that gate every phase |
+| [docs/recovery.md](docs/recovery.md) | What is on disk, and what to do when a process dies |
+
+## Skills this exercises
+
+| Area | Where it shows up |
+|---|---|
+| **Market microstructure / investment banking** | Uniform-price multi-unit auction in the Treasury/IPO mould: a descending clock, sealed resting limit bids, pro-rata allocation at the marginal price level, and retroactive repricing of every fill to the single clearing price. The mechanism design is the hard part — batching bids into fair windows so sub-millisecond colocation buys nothing, and integral minor units throughout because a float in a price is a settlement break waiting to happen. |
+| **Rust** | The whole backend. `#![forbid(unsafe_code)]`, newtypes over primitives for money and time, ownership used to make the single-writer rule a compile-time fact rather than a convention, and `proptest` asserting the documented invariants against randomized command sequences. |
+| **Concurrency** | A sequencer whose channel order *is* the auction's order; group commit where a thousand waiters are released by one `fsync` and one condition-variable notify; bounded queues that shed load rather than converting overload into unbounded latency. |
+| **Storage and crash recovery** | An append-only segmented command log with checksummed framing, torn-tail truncation on open, atomic snapshot writes, and a single `recover()` path shared by crash recovery and the hot standby — so failover has no code of its own to get wrong. Tested by killing a real process mid-commit. |
+| **Performance engineering** | A latency budget with a line per stage, benchmarked against the real numbers; percentiles rather than averages; and a thundering-herd load profile as the acceptance gate, because steady-state throughput is not the failure mode. |
+| **Next.js / TypeScript** | *(Phase 6)* The price clock is a pure function of elapsed time, so clients compute it locally and the server broadcasts only genuine state changes — a 100k-viewer auction costs almost nothing in fan-out. Bid submission is optimistic-with-reconciliation, with rejection reasons as first-class UI states. |
 
 ## Layout
 
