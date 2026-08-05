@@ -1,0 +1,9 @@
+# Normalize line endings so replay-sensitive fixtures and snapshots are stable
+# across the Windows dev box and Linux CI.
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.ico binary
+*.wal binary
+*.snapshot binary
