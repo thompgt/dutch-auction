@@ -26,6 +26,7 @@ use std::time::{Duration, Instant};
 
 use auction_proto::Seq;
 use crossbeam_channel::{Receiver, Sender, TryRecvError};
+use crossbeam_utils::Backoff;
 use parking_lot::{Condvar, Mutex};
 
 use crate::error::{Result, WalError};
@@ -219,15 +220,28 @@ fn run(mut wal: Wal, rx: Receiver<Msg>, watermark: Arc<Watermark>, options: WalO
         // one, and batches of 16 and 256 were paying exactly the same 13 ms, which is the
         // giveaway that the cost was a timer rather than the disk.
         //
+        // But the spin has to back off, and the benchmark caught that too: a bare `spin_loop`
+        // took the herd-sized batch from 4.2 ms to 9.9 ms. Hammering `try_recv` writes to the
+        // same channel head the producers are pushing into, so the writer spends its linger
+        // stealing the cache line from the threads it is waiting on — it slows down the very
+        // work it wants to arrive. `Backoff` spins a few times, then yields the core, which
+        // has no timer granularity to round up and leaves the producers alone.
+        //
         // The cost is one core busy for at most `linger` per batch, and only while there is
         // work in flight — the outer `recv()` above is a genuine block, so an idle auction
         // still spins on nothing. For a venue whose product is the tail, that is the right side
         // of the trade.
         let deadline = Instant::now() + options.linger;
+        let backoff = Backoff::new();
         let mut stopping = false;
         while batch.len() < options.max_batch {
             match rx.try_recv() {
-                Ok(Msg::Record(record)) => batch.push(record),
+                Ok(Msg::Record(record)) => {
+                    batch.push(record);
+                    // Records are flowing; the next empty poll should start its backoff from
+                    // scratch rather than inheriting the patience of an earlier lull.
+                    backoff.reset();
+                }
                 // Stop *after* this batch: these records were submitted before the stop and
                 // their submitters may already be waiting on them.
                 Ok(Msg::Stop) => {
@@ -239,7 +253,7 @@ fn run(mut wal: Wal, rx: Receiver<Msg>, watermark: Arc<Watermark>, options: WalO
                     if Instant::now() >= deadline {
                         break;
                     }
-                    std::hint::spin_loop();
+                    backoff.snooze();
                 }
             }
         }

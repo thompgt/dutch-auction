@@ -37,6 +37,7 @@ tower-http = { version = "0.5", features = ["trace", "cors"] }
 
 # Concurrency
 crossbeam-channel = "0.5"
+crossbeam-utils = "0.8"
 crc32fast = "1"
 dashmap = "6"
 parking_lot = "0.12"

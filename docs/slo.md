@@ -61,6 +61,47 @@ right behind it. If it loses the race the cost is charged to a customer. This is
 requirement on the sequencer thread, not a matching-engine optimization, and the load harness in
 Phase 7 must measure the flush-triggering command separately to prove which one is paying.
 
+### Measured: the durability line
+
+`cargo bench -p auction-wal --bench commit`, release profile, on an NVMe SSD. This is the 4 ms
+line, the largest single item in the budget:
+
+| Operation | Measured | Per record |
+|---|---|---|
+| Bare `fsync`, one record | 1.36 ms | 1.36 ms |
+| Append without syncing | 0.40 µs | 0.40 µs |
+| Group commit, batch of 1 | 1.99 ms | 1.99 ms |
+| Group commit, batch of 16 | 1.93 ms | 121 µs |
+| Group commit, batch of 256 | 2.06 ms | 8 µs |
+| **Group commit, batch of 4,096** | **3.43 ms** | **0.84 µs** |
+
+The shape is the argument for the whole mechanism: a batch of 4,096 costs about 1.7× a batch of
+one. Durability is a fixed toll on the disk, not a per-bid cost, and group commit is what turns
+16,000 bids per second from impossible into the same flush everyone was already waiting for.
+Even the worst case — a herd-sized batch — lands at 3.43 ms against a 4 ms budget.
+
+The batch-of-one figure is the honest floor: 1.36 ms of `fsync` plus the 500 µs linger the bid
+spends waiting for company that never arrives. A lone bid on an idle auction pays for batching
+and gets nothing back. That is the right trade — the auction's hard moment is the herd, not the
+quiet — but it is a real cost and it is why the linger is 500 µs rather than the millisecond the
+architecture sketch assumed.
+
+Two bugs were found by taking that measurement rather than asserting it, and both were invisible
+to every correctness test in the crate:
+
+1. **The linger was parking on a timer.** A 500 µs park rounds up to the OS timer granularity —
+   ~15.6 ms on stock Windows — so a single-record commit cost 13.6 ms, ten times a bare `fsync`.
+   Batches of 16 and 256 cost *exactly the same* 13 ms, and identical cost across a 16× change in
+   batch size is not a disk, it is a timer.
+2. **Then the spin that replaced it was too greedy.** A bare `spin_loop` on `try_recv` hammers
+   the same channel head the producers are pushing into, so the writer spent its linger stealing
+   the cache line from the threads it was waiting on. Small batches got faster; the herd-sized
+   batch went from 4.2 ms to 9.9 ms. Backing off — spin briefly, then yield — fixed both, and is
+   what the table above measures.
+
+A 500 µs batching window that actually waits 13 ms fails no test. It just quietly spends the
+entire p99 budget on a sleep.
+
 ## Percentiles, not averages
 
 All latency is reported as p50 / p99 / p99.9. Averages are not reported anywhere in the
