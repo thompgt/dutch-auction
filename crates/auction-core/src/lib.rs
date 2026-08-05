@@ -12,10 +12,25 @@
 //! commands reproduces the same state — which is simultaneously crash recovery, the hot
 //! standby, and the audit trail (see `docs/invariants.md`, I5).
 //!
-//! Phase 1 fills this in. Currently scaffolded.
+//! The pieces, in the order they matter:
+//!
+//! - [`schedule`] — the price clock, a pure function of elapsed time
+//! - [`command`] / [`event`] — the alphabet the machine reads and writes
+//! - [`ladder`] — resting bids indexed by limit price, triggered by the clock
+//! - [`state`] — [`AuctionState::apply`], batch-window matching, clearing and repricing
 
 #![forbid(unsafe_code)]
 
+pub mod command;
+pub mod config;
+pub mod event;
+pub mod ladder;
 pub mod schedule;
+pub mod state;
 
+pub use command::{BidKind, Command};
+pub use config::AuctionConfig;
+pub use event::{Event, Events, Fill, FillId, Outcome};
+pub use ladder::{PriceLadder, RestingBid};
 pub use schedule::{PriceSchedule, ScheduleKind};
+pub use state::{AuctionState, Collateral};

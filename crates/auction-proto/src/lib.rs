@@ -46,6 +46,12 @@ pub enum RejectReason {
     /// A resting bid's limit price is above the current clock price, which would fill it
     /// immediately at a worse price than requested — almost always a client bug.
     LimitAboveClock { server_price: Price },
+    /// The auction ended with this bid still resting: the clock never reached its limit.
+    /// Not an error, but the participant is owed an explicit answer (invariant I10).
+    Unfilled,
+    /// No live bid exists under this key for this participant — already filled, already
+    /// cancelled, or never submitted.
+    UnknownBid,
 }
 
 impl std::fmt::Display for RejectReason {
@@ -63,6 +69,8 @@ impl std::fmt::Display for RejectReason {
             Self::LimitAboveClock { server_price } => {
                 write!(f, "limit price is above the clock price of {server_price}")
             }
+            Self::Unfilled => write!(f, "auction ended before the clock reached this bid"),
+            Self::UnknownBid => write!(f, "no live bid under this key"),
         }
     }
 }
