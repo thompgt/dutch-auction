@@ -119,6 +119,13 @@ impl AuctionState {
     pub fn now(&self) -> Nanos {
         self.now
     }
+    /// The last sequence number applied, or `None` if nothing has been applied yet.
+    ///
+    /// Recovery needs this to know where in the log to resume: a snapshot is only useful if it
+    /// says which command it corresponds to.
+    pub fn last_seq(&self) -> Option<Seq> {
+        self.last_seq
+    }
     pub fn outcome(&self, key: IdempotencyKey) -> Option<Outcome> {
         self.outcomes.get(&key).copied()
     }

@@ -37,6 +37,7 @@ tower-http = { version = "0.5", features = ["trace", "cors"] }
 
 # Concurrency
 crossbeam-channel = "0.5"
+crc32fast = "1"
 dashmap = "6"
 parking_lot = "0.12"
 smallvec = { version = "1", features = ["serde", "union"] }
@@ -59,6 +60,7 @@ clap = { version = "4", features = ["derive", "env"] }
 # Testing
 proptest = "1"
 criterion = "0.5"
+tempfile = "3"
 hdrhistogram = "7"
 
 [profile.release]

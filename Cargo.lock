@@ -237,12 +237,16 @@ dependencies = [
  "auction-core",
  "auction-proto",
  "bincode",
+ "crc32fast",
+ "crossbeam-channel",
  "parking_lot",
  "proptest",
  "serde",
+ "serde_json",
+ "tempfile",
  "thiserror 1.0.69",
- "tokio",
  "tracing",
+ "uuid",
 ]
 
 [[package]]

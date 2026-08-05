@@ -10,11 +10,21 @@ description = "Append-only command log with group commit, snapshots, and replay"
 auction-proto.workspace = true
 auction-core.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 bincode.workspace = true
+crc32fast.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
-tokio.workspace = true
+crossbeam-channel.workspace = true
 parking_lot.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true
+tempfile.workspace = true
+uuid.workspace = true
+
+# A deliberately crashable writer, used by `tests/crash.rs` to kill a real process mid-commit.
+# Durability that has only been tested by dropping a struct has not been tested.
+[[bin]]
+name = "wal-crash-victim"
+path = "src/bin/crash_victim.rs"
