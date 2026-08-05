@@ -1,0 +1,21 @@
+[package]
+name = "auction-projector"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Projects the committed event stream into Postgres read models, settlement, and audit exports"
+
+[dependencies]
+auction-proto.workspace = true
+auction-core.workspace = true
+auction-wal.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sqlx.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+thiserror.workspace = true
+anyhow.workspace = true
+clap.workspace = true

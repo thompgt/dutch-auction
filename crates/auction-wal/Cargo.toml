@@ -1,0 +1,20 @@
+[package]
+name = "auction-wal"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Append-only command log with group commit, snapshots, and replay"
+
+[dependencies]
+auction-proto.workspace = true
+auction-core.workspace = true
+serde.workspace = true
+bincode.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+tokio.workspace = true
+parking_lot.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true

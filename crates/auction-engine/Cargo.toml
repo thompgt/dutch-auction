@@ -1,0 +1,20 @@
+[package]
+name = "auction-engine"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Sequencer, per-auction writer thread, clock, and replication"
+
+[dependencies]
+auction-proto.workspace = true
+auction-core.workspace = true
+auction-wal.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+metrics.workspace = true
+tokio.workspace = true
+crossbeam-channel.workspace = true
+parking_lot.workspace = true
+dashmap.workspace = true

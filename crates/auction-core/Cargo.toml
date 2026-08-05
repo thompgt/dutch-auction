@@ -1,0 +1,20 @@
+[package]
+name = "auction-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Deterministic auction state machine. No I/O, no clock, no async."
+
+# This crate is deliberately dependency-poor. Anything that could introduce
+# nondeterminism — a clock, a random source, an async runtime, a hash map with a
+# randomized hasher — breaks replay (invariant I5) and does not belong here.
+[dependencies]
+auction-proto.workspace = true
+serde.workspace = true
+smallvec.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+criterion.workspace = true

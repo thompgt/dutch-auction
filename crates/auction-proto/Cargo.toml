@@ -1,0 +1,12 @@
+[package]
+name = "auction-proto"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Shared domain primitives and wire types for the auction venue"
+
+[dependencies]
+serde.workspace = true
+thiserror.workspace = true
+uuid.workspace = true
