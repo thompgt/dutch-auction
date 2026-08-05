@@ -53,6 +53,22 @@ Phase 0 (repository, spec, invariants) — in progress. See the workplan for the
 Requires a Rust toolchain (stable) and Node 22+.
 
 ```sh
-cargo test          # unit + property tests
+cargo test                                  # unit + property tests
 cargo clippy --all-targets -- -D warnings
+cargo fmt --all
 ```
+
+### Windows
+
+CI runs on Linux (`x86_64-unknown-linux-gnu`), so `rust-toolchain.toml` intentionally pins only
+the channel, not a host triple. On Windows that resolves to whichever host rustup defaults to.
+Without Visual Studio's C++ workload there is no `link.exe`, and the build fails at the link
+step — use the GNU host instead, which links with mingw-w64 gcc:
+
+```powershell
+rustup set default-host x86_64-pc-windows-gnu
+$env:Path = "C:\msys64\mingw64\bin;$env:Path"   # or wherever mingw-w64 gcc lives
+```
+
+Build from PowerShell, not Git Bash: Git Bash puts coreutils `link` ahead of MSVC's `link.exe`
+on `PATH`, and the resulting error (`link: extra operand`) points nowhere useful.

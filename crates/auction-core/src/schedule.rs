@@ -128,18 +128,21 @@ impl PriceSchedule {
                     return (drop_needed == 0).then_some(Nanos::ZERO);
                 }
                 // Ceiling division: we need the step that first meets or passes the target.
-                let steps = drop_needed.div_ceil(step_size);
+                let steps = ceil_div(i128::from(drop_needed), i128::from(step_size));
                 Some(Nanos(
-                    (steps as u64).saturating_mul(step_duration.0.max(1)).min(u64::MAX),
+                    u64::try_from(steps)
+                        .unwrap_or(u64::MAX)
+                        .saturating_mul(step_duration.0.max(1)),
                 ))
             }
             ScheduleKind::Linear { rate_per_sec } => {
                 if rate_per_sec == 0 {
                     return (drop_needed == 0).then_some(Nanos::ZERO);
                 }
-                let ns = i128::from(drop_needed)
-                    .saturating_mul(1_000_000_000)
-                    .div_ceil(i128::from(rate_per_sec));
+                let ns = ceil_div(
+                    i128::from(drop_needed).saturating_mul(1_000_000_000),
+                    i128::from(rate_per_sec),
+                );
                 Some(Nanos(u64::try_from(ns).unwrap_or(u64::MAX)))
             }
         }
@@ -149,6 +152,16 @@ impl PriceSchedule {
     pub fn at_floor(&self, elapsed: Nanos) -> bool {
         self.price_at(elapsed) == self.floor_price
     }
+}
+
+/// Ceiling division for non-negative operands.
+///
+/// `i128::div_ceil` is still unstable, and rounding *up* is what makes `time_to_reach` return
+/// the first instant at which the price has actually met the target rather than the last
+/// instant at which it had not.
+fn ceil_div(numerator: i128, denominator: i128) -> i128 {
+    debug_assert!(numerator >= 0 && denominator > 0);
+    (numerator + denominator - 1) / denominator
 }
 
 /// `steps * step_size`, saturating. A very long-running auction should bottom out at the floor,
