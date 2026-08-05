@@ -16,5 +16,11 @@ tracing.workspace = true
 metrics.workspace = true
 tokio.workspace = true
 crossbeam-channel.workspace = true
+crossbeam-utils.workspace = true
 parking_lot.workspace = true
 dashmap.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+proptest.workspace = true

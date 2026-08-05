@@ -126,6 +126,16 @@ impl AuctionState {
     pub fn last_seq(&self) -> Option<Seq> {
         self.last_seq
     }
+    /// The batch window currently accumulating bids, as `(index, bids admitted)`.
+    ///
+    /// The engine needs this to know whether it owes the auction a tick. An open window must be
+    /// matched at its own boundary even if not one further command ever arrives — otherwise the
+    /// last bids of a quiet moment sit unmatched until somebody else happens to bid, which is a
+    /// fairness bug wearing a latency bug's clothes.
+    pub fn open_window(&self) -> Option<(u64, usize)> {
+        self.window.as_ref().map(|w| (w.index, w.bids.len()))
+    }
+
     pub fn outcome(&self, key: IdempotencyKey) -> Option<Outcome> {
         self.outcomes.get(&key).copied()
     }

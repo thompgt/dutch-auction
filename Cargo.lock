@@ -154,13 +154,17 @@ dependencies = [
  "auction-proto",
  "auction-wal",
  "crossbeam-channel",
+ "crossbeam-utils",
  "dashmap",
  "metrics",
  "parking_lot",
+ "proptest",
  "serde",
+ "tempfile",
  "thiserror 1.0.69",
  "tokio",
  "tracing",
+ "uuid",
 ]
 
 [[package]]

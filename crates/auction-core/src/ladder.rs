@@ -53,6 +53,16 @@ impl PriceLadder {
         self.levels.values().map(VecDeque::len).sum()
     }
 
+    /// The highest limit resting on the ladder, which — because the clock only descends — is the
+    /// next one it will reach.
+    ///
+    /// This is how the engine knows when to wake up. Without it the only way to discover that a
+    /// resting bid became triggerable would be to tick continuously and check, which would write
+    /// a command a millisecond into the audit record for the privilege of finding nothing to do.
+    pub fn next_trigger(&self) -> Option<Price> {
+        self.levels.keys().next_back().copied()
+    }
+
     /// Place a bid on the ladder.
     pub fn insert(&mut self, bid: RestingBid) {
         self.total_qty = self.total_qty.saturating_add(bid.qty);
