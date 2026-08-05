@@ -349,6 +349,43 @@ fn a_resting_bid_is_triggered_by_the_engines_own_clock() {
     drop(auction);
 }
 
+/// Shutting down must not wait for the auction's next deadline.
+///
+/// Deadlines are unbounded — a schedule whose floor is a century out is perfectly legal — and the
+/// engine parks until the next one. `Auction::drop` sets the stop flag and then *joins* that
+/// thread, so an unclamped park turns dropping an idle auction into a deadlock lasting as long as
+/// the schedule does. The whole existing suite missed this because its test schedule bottoms out
+/// after nine seconds, which merely made every shutdown slow instead of infinite.
+#[test]
+fn shutting_down_an_idle_auction_does_not_wait_for_its_next_deadline() {
+    let dir = tempfile::tempdir().unwrap();
+    // A floor the clock reaches in about a century.
+    let config = auction_core::AuctionConfig::new(
+        auction_proto::AuctionId(uuid::Uuid::from_u128(13)),
+        Qty(1_000),
+        auction_core::PriceSchedule::stepped(
+            Price(1_000_000),
+            Price(1),
+            auction_proto::Nanos::from_secs(3_600),
+            1,
+        ),
+    );
+    let auction = Auction::open(dir.path(), config, options()).unwrap();
+    let handle = auction.handle();
+    submit(&handle, Command::Open);
+
+    // Let the engine settle into its park before pulling the rug out.
+    std::thread::sleep(std::time::Duration::from_millis(50));
+
+    let started = std::time::Instant::now();
+    auction.shutdown();
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(2),
+        "shutdown waited {:?} for a deadline a century away",
+        started.elapsed()
+    );
+}
+
 /// An idle auction must not write commands into the audit record for having nothing to do.
 ///
 /// A tick per batch window would be a thousand `fsync`s a second and a log that grows without

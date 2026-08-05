@@ -58,15 +58,13 @@ impl Clock {
     pub fn now(&self) -> Nanos {
         Nanos(self.origin.elapsed().as_nanos().min(u64::MAX as u128) as u64)
     }
-
-    /// The instant at which auction time will reach `elapsed`.
-    ///
-    /// Saturates at the origin for times already past, so a deadline computed from a stale
-    /// timestamp fires immediately rather than panicking on an overflowed `Instant`.
-    pub fn instant_at(&self, elapsed: Nanos) -> Instant {
-        self.origin + std::time::Duration::from_nanos(elapsed.0)
-    }
 }
+
+// There is deliberately no `instant_at(elapsed) -> Instant`. It reads like the obvious companion
+// to `now()`, and it is a trap: auction deadlines are unbounded — a schedule whose floor is a
+// century out is perfectly legal — and `Instant + Duration` panics on overflow rather than
+// saturating. All deadline arithmetic therefore stays in `Nanos`, where the worst case is a
+// number too large to be interesting rather than a panic in the one thread that owns the auction.
 
 /// The next instant the engine has work to do on its own, with nothing arriving from outside.
 ///

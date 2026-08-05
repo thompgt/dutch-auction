@@ -38,10 +38,11 @@ use std::thread::JoinHandle;
 use std::time::Duration;
 
 use auction_core::{AuctionConfig, AuctionState, Command, Event, Events};
-use auction_proto::{Nanos, Seq, Status};
+use auction_proto::{Nanos, Price, Qty, Seq, Status};
 use auction_wal::{CommitThread, Committer, LogRecord, Wal, WalError, WalOptions};
 use crossbeam_channel::{Receiver, RecvTimeoutError, Sender, TryRecvError};
 use crossbeam_utils::Backoff;
+use parking_lot::RwLock;
 use tokio::sync::{broadcast, oneshot};
 
 use crate::clock::{window_close, Clock, Deadline};
@@ -57,6 +58,48 @@ use crate::replication::{Replica, ReplicationMode};
 pub struct Sequenced {
     pub seq: Seq,
     pub event: Event,
+}
+
+/// The longest the engine will park before looking at the world again.
+///
+/// Bounds how long a shutdown waits, and how stale the engine's idea of "nothing is due" may be.
+/// Ten times a second is far below anything the latency budget notices and far above anything an
+/// idle auction can be accused of spending.
+const MAX_PARK: Duration = Duration::from_millis(100);
+
+/// A cheap, read-mostly summary of an auction, for the network edge.
+///
+/// The engine thread owns the state and will not share it — that is the single-writer rule, and
+/// handing a lock on `AuctionState` to a thousand websockets would dismantle it. So the engine
+/// publishes this instead: a handful of `Copy` scalars behind an `RwLock`, written after any
+/// command that actually changed something.
+///
+/// The write is uncontended and costs tens of nanoseconds against a 0.1 ms budget line, and it is
+/// skipped entirely for commands that produced no events — which is most ticks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct View {
+    pub status: Status,
+    pub supply_remaining: Qty,
+    /// The clock price, or the clearing price once the auction has settled.
+    pub price: Price,
+    pub clearing_price: Option<Price>,
+    /// Auction time as of the last applied command.
+    pub elapsed: Nanos,
+    /// The last sequence applied. A client that has this number knows exactly what it has seen.
+    pub seq: Option<Seq>,
+}
+
+impl View {
+    fn of(state: &AuctionState) -> View {
+        View {
+            status: state.status(),
+            supply_remaining: state.supply_remaining(),
+            price: state.price(),
+            clearing_price: state.clearing_price(),
+            elapsed: state.now(),
+            seq: state.last_seq(),
+        }
+    }
 }
 
 /// How the engine is tuned. The defaults are the ones `docs/slo.md` budgets for.
@@ -108,6 +151,7 @@ impl Default for EngineOptions {
 pub struct Auction {
     handle: AuctionHandle,
     events: broadcast::Sender<Sequenced>,
+    view: Arc<RwLock<View>>,
     stop: Arc<AtomicBool>,
     engine: Option<JoinHandle<()>>,
     acks: Option<JoinHandle<()>>,
@@ -176,6 +220,7 @@ impl Auction {
         // told to resynchronise. Blocking the engine on a slow websocket is not on the table.
         let (events, _) = broadcast::channel(16_384);
         let stop = Arc::new(AtomicBool::new(false));
+        let view = Arc::new(RwLock::new(View::of(&state)));
 
         let acks = std::thread::Builder::new()
             .name("auction-ack".into())
@@ -199,9 +244,11 @@ impl Auction {
             .name("auction-engine".into())
             .spawn({
                 let stop = Arc::clone(&stop);
+                let view = Arc::clone(&view);
                 move || {
                     run(Engine {
                         state,
+                        view,
                         next_seq,
                         clock,
                         rx,
@@ -220,6 +267,7 @@ impl Auction {
         Ok(Auction {
             handle: AuctionHandle { tx },
             events,
+            view,
             stop,
             engine: Some(engine),
             acks: Some(acks),
@@ -236,6 +284,14 @@ impl Auction {
     /// order; it never sees one before the command that caused it is durable.
     pub fn subscribe(&self) -> broadcast::Receiver<Sequenced> {
         self.events.subscribe()
+    }
+
+    /// A snapshot of the auction, cheap enough to call on every connect.
+    ///
+    /// Consistent as of some applied command, never a torn mixture of two — which is what makes
+    /// it safe to send to a client as the base state its subsequent events apply to.
+    pub fn view(&self) -> View {
+        *self.view.read()
     }
 
     /// Stop the auction, draining what is already queued.
@@ -271,6 +327,8 @@ impl Drop for Auction {
 /// in the type system rather than in a comment.
 struct Engine {
     state: AuctionState,
+    /// Published for readers that must not be allowed near the state itself.
+    view: Arc<RwLock<View>>,
     next_seq: Seq,
     clock: Clock,
     rx: Receiver<Submission>,
@@ -347,6 +405,14 @@ fn run(mut e: Engine) {
         }
 
         metrics::counter!("auction_commands_total").increment(1);
+
+        // Republish only when something actually changed. Most ticks find an empty window and
+        // produce nothing, and taking a write lock to publish an identical view would be paying
+        // for the quiet case to make the busy one no faster.
+        if !events.is_empty() {
+            *e.view.write() = View::of(&e.state);
+        }
+
         if e.ack_tx
             .send(Pending {
                 seq,
@@ -401,7 +467,7 @@ fn next(e: &Engine) -> Next {
             // coarse timeout, which exists only to notice a shutdown — an idle auction must cost
             // no CPU and must not write a command a millisecond into the audit record just to
             // discover it had nothing to do.
-            match e.rx.recv_timeout(Duration::from_millis(100)) {
+            match e.rx.recv_timeout(MAX_PARK) {
                 Ok(s) => return Next::Work(s),
                 Err(RecvTimeoutError::Timeout) => continue,
                 Err(RecvTimeoutError::Disconnected) => return Next::Stop,
@@ -421,9 +487,16 @@ fn next(e: &Engine) -> Next {
             backoff.snooze();
         } else {
             // Far enough that timer granularity is noise. Park, waking `spin_ahead` early so the
-            // spin above covers the imprecise part.
-            let wake = e.clock.instant_at(due) - e.options.spin_ahead;
-            match e.rx.recv_deadline(wake) {
+            // spin above covers the imprecise part — but never for longer than `MAX_PARK`.
+            //
+            // The clamp is not tidiness. Deadlines are unbounded: an auction whose floor is a
+            // year out computes a wake-up a year out, and a thread parked for a year notices
+            // neither a shutdown nor anything else. `Auction::drop` sets the stop flag and then
+            // *joins* this thread, so an unclamped park turns dropping an idle auction into a
+            // deadlock that lasts as long as the schedule does. Waking ten times a second to
+            // look at an atomic costs nothing measurable and bounds shutdown to `MAX_PARK`.
+            let park = (remaining - e.options.spin_ahead).min(MAX_PARK);
+            match e.rx.recv_timeout(park) {
                 Ok(s) => return Next::Work(s),
                 Err(RecvTimeoutError::Timeout) => continue,
                 Err(RecvTimeoutError::Disconnected) => return Next::Stop,

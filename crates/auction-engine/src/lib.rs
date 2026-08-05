@@ -38,6 +38,6 @@ pub mod ingress;
 pub mod replication;
 
 pub use clock::Clock;
-pub use engine::{Auction, EngineOptions, Sequenced};
+pub use engine::{Auction, EngineOptions, Sequenced, View};
 pub use ingress::{Ack, AuctionHandle, Shed};
 pub use replication::{LocalReplica, Replica, ReplicaLost, ReplicationMode};
