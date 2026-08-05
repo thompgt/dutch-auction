@@ -22,3 +22,7 @@ serde_json.workspace = true
 # Tests mint identifiers deterministically (`Uuid::from_u128`) so a failing property test
 # reproduces from its seed alone. Production identifiers are minted at the edge, never here.
 uuid.workspace = true
+
+[[bench]]
+name = "apply"
+harness = false

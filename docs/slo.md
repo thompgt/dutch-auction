@@ -35,6 +35,32 @@ engineer, test, and gate on is the **server-side** figure, measured at the ingre
 Each boundary is instrumented as a Prometheus histogram, so a regression shows up as a specific
 line in this table rather than as a vague slowdown.
 
+### Measured: the engine-apply line
+
+`cargo bench -p auction-core --bench apply`, release profile. The two rows a bid actually waits
+on are comfortable against the 0.1 ms budget:
+
+| Operation | Measured | Budget |
+|---|---|---|
+| Match one bid, batching off | ~2.1 µs | 100 µs |
+| Admit one bid into an open window | ~3.5 µs | 100 µs |
+| **Close a 5,000-bid window** | **~2.6 ms** | — |
+| **Trigger 5,000 resting bids** | **~3.5 ms** | — |
+
+The last two rows are the finding. Closing a herd-sized window is one synchronous burst that
+sorts, walks price levels, allocates pro-rata, clears, and reprices every fill. Amortized it is
+cheap — ~0.5 µs per participant — but it is not *charged* amortized: whichever command happens
+to arrive first past the window boundary pays the whole 2.6 ms, and every command queued behind
+it waits too. That is 26% of the p99 budget landing on one arbitrary participant.
+
+The architecture already contains the answer, and Phase 3 has to actually deliver it: **the
+engine's own clock tick must reach the sequencer before user traffic does at every window
+boundary.** Ticks are commands (invariant I8), so if the tick wins the race the flush cost is
+charged to the timer rather than to a participant's bid, and the herd's acks all leave together
+right behind it. If it loses the race the cost is charged to a customer. This is a scheduling
+requirement on the sequencer thread, not a matching-engine optimization, and the load harness in
+Phase 7 must measure the flush-triggering command separately to prove which one is paying.
+
 ## Percentiles, not averages
 
 All latency is reported as p50 / p99 / p99.9. Averages are not reported anywhere in the
