@@ -53,10 +53,11 @@ impl Nanos {
     /// the mechanism that makes sub-millisecond advantage worthless (`docs/auction-rules.md` §5).
     /// A zero width disables batching, putting every bid in its own window.
     pub fn window_index(self, width: Nanos) -> u64 {
-        if width.0 == 0 {
-            self.0
-        } else {
-            self.0 / width.0
+        match width.0 {
+            // Not a division guard: a zero width means "no batching", which puts every
+            // nanosecond in its own window rather than being undefined.
+            0 => self.0,
+            w => self.0 / w,
         }
     }
 }

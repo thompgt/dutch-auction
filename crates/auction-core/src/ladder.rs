@@ -97,7 +97,7 @@ impl PriceLadder {
     /// secondary index on every insert to speed it up would tax the path that actually matters.
     pub fn remove(&mut self, participant: ParticipantId, key: IdempotencyKey) -> Option<RestingBid> {
         let mut found = None;
-        for (_, level) in self.levels.iter_mut() {
+        for level in self.levels.values_mut() {
             if let Some(pos) = level
                 .iter()
                 .position(|b| b.key == key && b.participant == participant)
