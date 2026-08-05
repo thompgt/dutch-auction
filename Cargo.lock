@@ -153,6 +153,7 @@ dependencies = [
  "auction-core",
  "auction-proto",
  "auction-wal",
+ "criterion",
  "crossbeam-channel",
  "crossbeam-utils",
  "dashmap",
