@@ -22,9 +22,14 @@ uuid.workspace = true
 [dev-dependencies]
 proptest.workspace = true
 tempfile.workspace = true
+criterion.workspace = true
 
 # A deliberately crashable writer, used by `tests/crash.rs` to kill a real process mid-commit.
 # Durability that has only been tested by dropping a struct has not been tested.
 [[bin]]
 name = "wal-crash-victim"
 path = "src/bin/crash_victim.rs"
+
+[[bench]]
+name = "commit"
+harness = false

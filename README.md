@@ -50,8 +50,8 @@ deploy/               Docker, compose, k8s manifests, Grafana dashboards
 |---|---|
 | 0 — repository, spec, invariants | done |
 | 1 — `auction-core` state machine | done |
-| 2 — `auction-wal` durability and replay | next |
-| 3 — `auction-engine` sequencer, threading, replication | |
+| 2 — `auction-wal` durability and replay | done |
+| 3 — `auction-engine` sequencer, threading, replication | next |
 | 4 — `auction-gateway` network edge | |
 | 5 — `auction-projector` + Postgres | |
 | 6 — frontend | |
@@ -63,13 +63,22 @@ ladder, batch-window matching with pro-rata allocation at the marginal price, an
 clearing with retroactive repricing. Invariants I1, I2, I3, I5, I7, I9 and I10 are asserted by
 the property suite; I4 is asserted by the engine itself on every apply.
 
+`auction-wal` makes that state survive a power cut. It logs commands rather than events —
+events are recomputable from a deterministic machine, so logging them would mean paying for
+derived data twice — and batches appends into a single `fsync` that releases every waiter at
+once. `recover()` is the only path back from disk, which is what makes crash recovery and the
+hot standby the same mechanism rather than two that resemble each other. Invariant I6 is tested
+by killing a real process mid-commit and checking that recovery honours every acknowledgement
+it managed to make.
+
 ## Development
 
 Requires a Rust toolchain (stable) and Node 22+.
 
 ```sh
 cargo test --workspace                            # unit, scenario, and property tests
-cargo bench -p auction-core --bench apply         # hot-path latency, see docs/slo.md
+cargo bench -p auction-core --bench apply         # matching latency, see docs/slo.md
+cargo bench -p auction-wal  --bench commit        # durability latency, see docs/slo.md
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all
 ```
