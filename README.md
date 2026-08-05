@@ -63,8 +63,8 @@ deploy/               Docker, compose, k8s manifests, Grafana dashboards
 | 0 — repository, spec, invariants | done |
 | 1 — `auction-core` state machine | done |
 | 2 — `auction-wal` durability and replay | done |
-| 3 — `auction-engine` sequencer, threading, replication | next |
-| 4 — `auction-gateway` network edge | |
+| 3 — `auction-engine` sequencer, threading, replication | done |
+| 4 — `auction-gateway` network edge | next |
 | 5 — `auction-projector` + Postgres | |
 | 6 — frontend | |
 | 7 — observability and load testing | |
@@ -82,6 +82,18 @@ once. `recover()` is the only path back from disk, which is what makes crash rec
 hot standby the same mechanism rather than two that resemble each other. Invariant I6 is tested
 by killing a real process mid-commit and checking that recovery honours every acknowledgement
 it managed to make.
+
+`auction-engine` is the single writer, and the thing worth pointing at is what it does with its
+own clock. Closing a herd-sized batch window costs ~2.6 ms, and whoever's command triggers it
+pays all of it — so the engine checks its own deadline *before* taking anything from the ingress
+queue, and the command it applies at a window boundary is its own `Tick`. The flush is charged to
+the timer instead of to a participant, and the herd's acknowledgements leave together right
+behind it. Only three things can ever come due — a window boundary, a resting bid's limit, the
+floor — and each is cleared by the tick it schedules, so an idle auction has no deadline at all
+and writes nothing at all. The engine never waits for an `fsync` either: acknowledgement happens
+on its own thread, so the flush for one command overlaps the matching of the next while still
+landing strictly after the disk (I6). The standby is fed by the same path and applies records
+through the same `follow()` recovery uses, which is why failover has no code of its own.
 
 ## Development
 

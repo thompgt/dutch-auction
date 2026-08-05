@@ -1,7 +1,7 @@
 # Recovery
 
-What is on disk, what it means, and what to do when a process dies. This document covers
-`auction-wal` only; promotion and fencing of a standby arrive with Phases 3 and 8.
+What is on disk, what it means, and what to do when a process dies. Fencing and automatic
+promotion of a standby arrive with Phase 8; the replication mechanism itself is described below.
 
 ## What a log directory contains
 
@@ -59,6 +59,40 @@ different auction's directory, or at the right directory with the wrong configur
 auction id and the supply before doing anything else; this one is usually a deployment mistake
 rather than data damage.
 
+## The standby
+
+The standby applies the primary's command stream through `auction_wal::follow`, which is the
+same function crash recovery calls. It runs no code of its own, so there is no failover-only path
+that could be wrong in a way normal operation would not have caught.
+
+With **sync replication** an acknowledgement waits for the standby to confirm, exactly as it
+waits for the `fsync`. Both gates are opened at the same instant — the record goes to the disk
+and the network together — so the standby's round trip overlaps the flush rather than queueing
+behind it.
+
+### `standby did not confirm; degrading to async replication`
+
+**This is an incident, and the log line says why.** A sync-replicated primary that does not hear
+from its standby within `replica_timeout` declares it lost and carries on acknowledging on
+durability alone. From that line onward, **a primary failure can lose acknowledged bids.**
+
+The choice is deliberate: halting a live auction because a *spare* machine died is a worse
+outcome for every participant than the risk being avoided. But the promise in
+[slo.md](slo.md) — zero acked bids lost on primary failure — is no longer being kept, and the
+window stays open until a standby is back and caught up.
+
+What to do, in order:
+
+1. Confirm the primary is still serving. It should be; that is the point of degrading.
+2. Find out whether the standby is dead or merely partitioned. A partitioned standby that is
+   still applying is a split-brain risk at promotion time, not a spare.
+3. Bring up a replacement standby from the primary's newest snapshot. It joins from that state
+   and follows from there; it does not need to replay from the beginning.
+4. Do not fail over manually while degraded unless the primary is already gone. The standby is
+   behind by definition, and how far behind is not known.
+
+The metric is `auction_replica_lost_total`. Any non-zero value on a live auction should page.
+
 ## Verifying a log by hand
 
 ```sh
@@ -72,8 +106,9 @@ path that could disagree with the real one.
 
 ## What is not yet handled
 
-- **Snapshots are written by whoever calls `snapshot::write`.** Nothing schedules them yet;
-  Phase 3 owns that, because it owns the thread that has exclusive access to the state.
+- **Nothing fences a demoted primary.** Promotion is manual, and a primary that comes back
+  believing it is still primary would be a second writer. Phase 8 owns this, and until it lands,
+  failover is an operator procedure that must include stopping the old primary first.
 - **Segments are never archived or pruned.** They accumulate. For a single auction that is
   bounded and small; a long-lived multi-auction deployment needs a retention policy that moves
   sealed segments to object storage rather than deleting them.

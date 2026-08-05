@@ -46,6 +46,7 @@ use tokio::sync::{broadcast, oneshot};
 
 use crate::clock::{window_close, Clock, Deadline};
 use crate::ingress::{Ack, AuctionHandle, Submission};
+use crate::replication::{Replica, ReplicationMode};
 
 /// One event, with its place in the total order.
 ///
@@ -80,6 +81,11 @@ pub struct EngineOptions {
     /// backoff instead; outside it, it parks, because burning a core to wait out a whole price
     /// step buys nothing.
     pub spin_ahead: Duration,
+    /// Whether an acknowledgement waits for the standby. Ignored when there is no replica.
+    pub replication: ReplicationMode,
+    /// How long a synchronous acknowledgement waits for the standby before declaring it lost and
+    /// degrading to async. See the note in [`crate::replication`] on why this is not infinite.
+    pub replica_timeout: Duration,
 }
 
 impl Default for EngineOptions {
@@ -89,6 +95,11 @@ impl Default for EngineOptions {
             wal: WalOptions::default(),
             snapshot_every: 50_000,
             spin_ahead: Duration::from_millis(2),
+            replication: ReplicationMode::Async,
+            // Generous against the 1.5 ms budget: this is not the latency target, it is the
+            // point at which a standby is declared gone. Being trigger-happy here would give up
+            // the zero-loss promise over a garbage collection pause on the secondary.
+            replica_timeout: Duration::from_secs(2),
         }
     }
 }
@@ -113,6 +124,29 @@ impl Auction {
         dir: impl AsRef<std::path::Path>,
         config: AuctionConfig,
         options: EngineOptions,
+    ) -> Result<Auction, WalError> {
+        Auction::open_inner(dir, config, options, None)
+    }
+
+    /// Open with a hot standby following along.
+    ///
+    /// With [`ReplicationMode::Sync`] this is what makes "zero acked bids lost on primary
+    /// failure" true rather than aspirational: no acknowledgement leaves until the standby has
+    /// applied the command.
+    pub fn open_replicated(
+        dir: impl AsRef<std::path::Path>,
+        config: AuctionConfig,
+        options: EngineOptions,
+        replica: Arc<dyn Replica>,
+    ) -> Result<Auction, WalError> {
+        Auction::open_inner(dir, config, options, Some(replica))
+    }
+
+    fn open_inner(
+        dir: impl AsRef<std::path::Path>,
+        config: AuctionConfig,
+        options: EngineOptions,
+        replica: Option<Arc<dyn Replica>>,
     ) -> Result<Auction, WalError> {
         let dir = dir.as_ref().to_path_buf();
 
@@ -148,7 +182,8 @@ impl Auction {
             .spawn({
                 let committer = committer.clone();
                 let events = events.clone();
-                move || run_acks(ack_rx, committer, events)
+                let replica = replica.clone();
+                move || run_acks(ack_rx, committer, events, replica, options)
             })
             .expect("spawning the ack thread");
 
@@ -175,6 +210,7 @@ impl Auction {
                         snap_tx,
                         stop,
                         options,
+                        replica,
                         last_snapshot: next_seq,
                     })
                 }
@@ -243,6 +279,7 @@ struct Engine {
     snap_tx: Sender<(Seq, AuctionState)>,
     stop: Arc<AtomicBool>,
     options: EngineOptions,
+    replica: Option<Arc<dyn Replica>>,
     last_snapshot: Seq,
 }
 
@@ -293,7 +330,16 @@ fn run(mut e: Engine) {
 
         // Log after applying, not before. `apply` panics on a sequence violation (invariant I4),
         // and a command that could not be applied must not be in the record as though it was.
-        if let Err(err) = e.committer.submit(LogRecord::new(seq, ts, submission.cmd)) {
+        let record = LogRecord::new(seq, ts, submission.cmd);
+
+        // The standby gets the record at the same moment the disk does, so the round trip
+        // overlaps the `fsync` rather than queueing behind it. Both are gates on the ack; only a
+        // fool pays for them one after the other.
+        if let Some(replica) = &e.replica {
+            replica.send(&record);
+        }
+
+        if let Err(err) = e.committer.submit(record) {
             // The log is the only proof of what was acknowledged. Continuing to match without
             // it would mean filling bids that no recovery could reproduce.
             tracing::error!(error = %err, %seq, "commit thread is gone; stopping the engine");
@@ -452,7 +498,18 @@ fn maybe_snapshot(e: &mut Engine, seq: Seq) {
 /// One `wait_durable` releases the whole batch: the watermark is monotonic, so once the head of
 /// the queue is durable every earlier record already is, and the rest of the batch drains
 /// without touching the disk again.
-fn run_acks(rx: Receiver<Pending>, committer: Committer, events: broadcast::Sender<Sequenced>) {
+fn run_acks(
+    rx: Receiver<Pending>,
+    committer: Committer,
+    events: broadcast::Sender<Sequenced>,
+    replica: Option<Arc<dyn Replica>>,
+    options: EngineOptions,
+) {
+    // Set once the standby has missed its deadline. From here on the promise in `docs/slo.md`
+    // that a primary failure loses no acked bid no longer holds, which is why it is an error log
+    // and a metric rather than a quiet fallback.
+    let mut replica_lost = false;
+
     while let Ok(pending) = rx.recv() {
         if let Err(e) = committer.wait_durable(pending.seq) {
             // The log stopped. Every waiter from here on is dropped rather than acknowledged:
@@ -460,6 +517,27 @@ fn run_acks(rx: Receiver<Pending>, committer: Committer, events: broadcast::Send
             // Sending an ack would be claiming a durability that does not exist (invariant I6).
             tracing::error!(error = %e, seq = %pending.seq, "not durable; refusing to acknowledge");
             return;
+        }
+
+        // Durable here, replicated below. Both gates were opened at the same instant by the
+        // engine thread, so this wait is whatever the standby still owes beyond the `fsync` —
+        // usually nothing.
+        if let (Some(replica), ReplicationMode::Sync, false) =
+            (&replica, options.replication, replica_lost)
+        {
+            if let Err(e) = replica.wait_confirmed(pending.seq, options.replica_timeout) {
+                // Availability over zero-RPO, deliberately and loudly. Halting a live auction
+                // because a spare machine died is a worse outcome for every participant than
+                // the risk being avoided — but the risk is now real, so it is an incident.
+                tracing::error!(
+                    error = %e,
+                    seq = %pending.seq,
+                    "standby did not confirm; degrading to async replication -- acked bids can \
+                     now be lost if this primary fails"
+                );
+                metrics::counter!("auction_replica_lost_total").increment(1);
+                replica_lost = true;
+            }
         }
 
         // Broadcast before replying. The public record of what happened should not lag the

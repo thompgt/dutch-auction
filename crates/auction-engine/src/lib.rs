@@ -28,13 +28,16 @@
 //! - [`clock`] — the only clock read in the system
 //! - [`ingress`] — the bounded door, and load shedding
 //! - [`engine`] — the writer thread, the tick scheduler, and snapshots
+//! - [`replication`] — the hot standby, which runs no code of its own
 
 #![forbid(unsafe_code)]
 
 pub mod clock;
 pub mod engine;
 pub mod ingress;
+pub mod replication;
 
 pub use clock::Clock;
 pub use engine::{Auction, EngineOptions, Sequenced};
 pub use ingress::{Ack, AuctionHandle, Shed};
+pub use replication::{LocalReplica, Replica, ReplicaLost, ReplicationMode};
