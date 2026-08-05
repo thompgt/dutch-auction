@@ -67,7 +67,8 @@ pub fn write(dir: impl AsRef<Path>, state: &AuctionState) -> Result<Option<Seq>>
     let final_path = snapshot_path(dir, seq);
     let temp_path = final_path.with_extension("snap.partial");
     {
-        let mut file = std::fs::File::create(&temp_path).map_err(|e| WalError::io(&temp_path, e))?;
+        let mut file =
+            std::fs::File::create(&temp_path).map_err(|e| WalError::io(&temp_path, e))?;
         file.write_all(&body)
             .map_err(|e| WalError::io(&temp_path, e))?;
         file.sync_all().map_err(|e| WalError::io(&temp_path, e))?;
@@ -122,7 +123,7 @@ pub fn list(dir: impl AsRef<Path>) -> Result<Vec<(Seq, PathBuf)>> {
             found.push((seq, entry.path()));
         }
     }
-    found.sort_unstable_by(|a, b| b.0.cmp(&a.0));
+    found.sort_unstable_by_key(|(seq, _)| std::cmp::Reverse(*seq));
     Ok(found)
 }
 
@@ -174,6 +175,9 @@ mod tests {
 
     #[test]
     fn a_partial_file_is_not_mistaken_for_a_snapshot() {
-        assert_eq!(snapshot_seq("snapshot-00000000000000000042.snap.partial"), None);
+        assert_eq!(
+            snapshot_seq("snapshot-00000000000000000042.snap.partial"),
+            None
+        );
     }
 }

@@ -12,7 +12,7 @@ use auction_proto::{Nanos, Price};
 
 /// How price decays over time.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
+#[serde(rename_all = "snake_case")]
 pub enum ScheduleKind {
     /// Price holds flat for `step_duration`, then drops by `step_size`. **The default.**
     ///

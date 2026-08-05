@@ -77,6 +77,15 @@ pub(crate) fn read_segment(path: &Path) -> Result<SegmentContents> {
                 at += consumed;
             }
             Decoded::Incomplete => break,
+            // Never treated as an end-of-log, even in the final segment: these bytes survived
+            // their checksum, so they are real commands we have lost the ability to read.
+            Decoded::Malformed(detail) => {
+                return Err(WalError::Corrupt {
+                    path: path.to_path_buf(),
+                    offset: at as u64,
+                    detail,
+                })
+            }
         }
     }
     Ok(SegmentContents {

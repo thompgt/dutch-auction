@@ -70,11 +70,21 @@ pub(crate) fn encode_into(record: &LogRecord, out: &mut Vec<u8>) -> Result<()> {
 
 /// What a decode attempt found.
 pub(crate) enum Decoded {
-    Record { record: LogRecord, consumed: usize },
+    Record {
+        record: LogRecord,
+        consumed: usize,
+    },
     /// Not enough bytes, or the bytes present do not check out. Either way the caller cannot
     /// read past this point; whether that is benign depends on where in the log it happened,
     /// which is the reader's judgement to make, not this function's.
     Incomplete,
+    /// The checksum passed and the payload still would not decode.
+    ///
+    /// This is categorically different from a torn write: the bytes on disk are exactly the
+    /// bytes that were written, so the log is intact and it is our *reading* of it that is
+    /// wrong — a format change, most likely. Treating it as an end-of-log would silently
+    /// discard real, acknowledged commands, so it is never benign, wherever it appears.
+    Malformed(String),
 }
 
 /// Decode one framed record from the front of `buf`.
@@ -97,22 +107,27 @@ pub(crate) fn decode(buf: &[u8]) -> Decoded {
         return Decoded::Incomplete;
     }
     match bincode::deserialize::<LogRecord>(payload) {
-        // A checksum-clean payload that will not deserialize is not a torn write — the bytes
-        // are exactly what was written. It means a format change, which the caller must not
-        // paper over by treating it as an end-of-log.
         Ok(record) => Decoded::Record {
             record,
             consumed: end,
         },
-        Err(_) => Decoded::Incomplete,
+        Err(e) => Decoded::Malformed(e.to_string()),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use auction_proto::{ParticipantId, Price};
+    use auction_proto::ParticipantId;
     use uuid::Uuid;
+
+    fn describe(d: &Decoded) -> String {
+        match d {
+            Decoded::Record { .. } => "a record".into(),
+            Decoded::Incomplete => "incomplete".into(),
+            Decoded::Malformed(why) => format!("malformed: {why}"),
+        }
+    }
 
     fn sample(seq: u64) -> LogRecord {
         LogRecord::new(
@@ -134,7 +149,7 @@ mod tests {
                 assert_eq!(record, sample(7));
                 assert_eq!(consumed, buf.len());
             }
-            Decoded::Incomplete => panic!("a whole record read as incomplete"),
+            other => panic!("a whole record did not decode: {}", describe(&other)),
         }
     }
 
@@ -151,7 +166,7 @@ mod tests {
                     assert_eq!(record, sample(i));
                     at += consumed;
                 }
-                Decoded::Incomplete => panic!("record {i} did not decode"),
+                other => panic!("record {i} did not decode: {}", describe(&other)),
             }
         }
         assert_eq!(at, buf.len());
@@ -177,6 +192,19 @@ mod tests {
         encode_into(&sample(3), &mut buf).unwrap();
         buf[HEADER_LEN] ^= 0b1000_0000;
         assert!(matches!(decode(&buf), Decoded::Incomplete));
+    }
+
+    #[test]
+    fn intact_bytes_we_cannot_read_are_not_mistaken_for_an_end_of_log() {
+        // A well-formed frame whose payload is not a record: what a format change looks like
+        // from the reader's side. Reporting this as a torn tail would throw away every command
+        // after it, which is the failure mode the checksum exists to make impossible.
+        let payload = b"this is not a log record";
+        let mut buf = Vec::new();
+        buf.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+        buf.extend_from_slice(&crc32fast::hash(payload).to_le_bytes());
+        buf.extend_from_slice(payload);
+        assert!(matches!(decode(&buf), Decoded::Malformed(_)));
     }
 
     #[test]

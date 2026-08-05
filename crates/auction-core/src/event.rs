@@ -57,7 +57,7 @@ impl Fill {
 /// (invariant I7). A key admitted into an open batch window is [`Outcome::Queued`] until the
 /// window closes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(tag = "outcome", rename_all = "snake_case")]
+#[serde(rename_all = "snake_case")]
 pub enum Outcome {
     /// Admitted into a batch window; matching has not run yet.
     Queued { qty: Qty },
@@ -73,7 +73,7 @@ pub enum Outcome {
 
 /// Something that happened, in sequence order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(tag = "event", rename_all = "snake_case")]
+#[serde(rename_all = "snake_case")]
 pub enum Event {
     /// The clock started.
     Opened { start_price: Price, supply: Qty },

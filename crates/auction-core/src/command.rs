@@ -8,12 +8,18 @@
 //! Note that [`Command::Tick`] is a command like any other. The clock does not get a side door
 //! into the state machine; price advances and resting-bid triggers pass through the same total
 //! order as user bids (invariant I8).
+//!
+//! These enums are externally tagged — the serde default — rather than carrying a `tag = "..."`
+//! discriminant field. An internally tagged enum can only be *deserialized* from a
+//! self-describing format, which would quietly rule out every compact binary encoding the log
+//! might use. A prettier JSON shape is not worth constraining the format the audit record is
+//! written in.
 
 use auction_proto::{IdempotencyKey, ParticipantId, Price, Qty};
 
 /// Something to be applied to an auction, in sequence order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(tag = "cmd", rename_all = "snake_case")]
+#[serde(rename_all = "snake_case")]
 pub enum Command {
     /// Start the clock. The timestamp of this command defines `elapsed == 0`.
     Open,
@@ -48,7 +54,7 @@ pub enum Command {
 
 /// The two ways to bid (`docs/auction-rules.md` §3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
+#[serde(rename_all = "snake_case")]
 pub enum BidKind {
     /// "Give me up to Q units at whatever the clock says now."
     ///
