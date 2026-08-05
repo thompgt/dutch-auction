@@ -484,15 +484,17 @@ impl AuctionState {
             // the priority it already earned (`docs/auction-rules.md` §4).
             let remainder = b.qty.saturating_sub(alloc);
             if let (Some(limit), false) = (b.resting_limit, remainder.is_zero() || exhausted) {
-                if self.reserve(b.participant, limit, remainder) {
-                    self.resting.requeue(RestingBid {
-                        seq: b.seq,
-                        participant: b.participant,
-                        key: b.key,
-                        qty: remainder,
-                        limit,
-                    });
-                }
+                // Re-commit rather than re-reserve: this is strictly less than what was just
+                // released, so it cannot fail, and a checked call here could silently drop a
+                // live bid.
+                commit(&mut self.collateral, b.participant, limit, remainder);
+                self.resting.requeue(RestingBid {
+                    seq: b.seq,
+                    participant: b.participant,
+                    key: b.key,
+                    qty: remainder,
+                    limit,
+                });
             }
         }
 
