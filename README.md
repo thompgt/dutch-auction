@@ -1,0 +1,58 @@
+# dutch-auction
+
+A production-grade **multi-unit descending-price (Dutch) auction** venue, built for tail latency.
+
+Fixed supply, a price that decays on a published schedule, bidders take quantity at the
+prevailing price, and every winner settles at a single **uniform clearing price** — the price
+at which supply was exhausted.
+
+The whole system is organized around one hard requirement: when the clock crosses a price
+level and thousands of participants race for the remaining supply, bid acceptance must be
+strictly ordered, must never oversell, must be auditable, and must acknowledge within
+**p99 of 50 ms end-to-end** (server-side budget: **p99 ≤ 10 ms**, see [docs/slo.md](docs/slo.md)).
+
+## Design in one paragraph
+
+A **single-writer, event-sourced, in-memory matching engine**. Oversell and ordering are the
+same problem — concurrent mutation of `remaining_supply` — so one thread owns each auction's
+state and every bid is funneled through a sequencer that assigns a monotonic sequence number
+and an authoritative timestamp. Correctness becomes trivial and the hot path becomes a straight
+line with no database in it. Because the engine is a deterministic state machine
+(`apply(seq, ts, cmd) -> [event]`), the same property buys crash recovery, a hot standby, and a
+regulator-grade audit trail for free. Postgres is a downstream projection, never on the hot path.
+
+## Documentation
+
+| Doc | What it covers |
+|---|---|
+| [docs/auction-rules.md](docs/auction-rules.md) | Exact auction mechanics: the clock, bid types, clearing, repricing, fairness |
+| [docs/invariants.md](docs/invariants.md) | Properties the engine must never violate — the source of the property-test suite |
+| [docs/slo.md](docs/slo.md) | The latency budget and the acceptance criteria that gate every phase |
+
+## Layout
+
+```
+crates/
+  auction-proto/      shared wire types — single source of truth
+  auction-core/       pure deterministic state machine (no I/O, no clock, no async)
+  auction-wal/        append-only log, group commit, snapshots, replay
+  auction-engine/     core + wal + sequencer + replication; one thread per auction
+  auction-gateway/    axum: WebSocket + HTTP, auth, rate limit, risk pre-checks
+  auction-projector/  event stream -> Postgres read models, settlement, audit export
+web/                  Next.js + TypeScript frontend
+load/                 thundering-herd load generator + latency analysis
+deploy/               Docker, compose, k8s manifests, Grafana dashboards
+```
+
+## Status
+
+Phase 0 (repository, spec, invariants) — in progress. See the workplan for the phase sequence.
+
+## Development
+
+Requires a Rust toolchain (stable) and Node 22+.
+
+```sh
+cargo test          # unit + property tests
+cargo clippy --all-targets -- -D warnings
+```
