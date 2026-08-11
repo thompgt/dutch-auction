@@ -221,6 +221,41 @@ fn a_replayed_idempotency_key_returns_the_original_outcome_and_fills_nothing() {
     h.assert_invariants();
 }
 
+/// Repricing has to reach the idempotency record too, or a retry contradicts I2.
+#[test]
+fn a_retry_after_clearing_is_answered_with_the_clearing_price() {
+    let mut h = Harness::open(10, NO_BATCHING);
+    h.fund(1, 100_000);
+    h.fund(2, 100_000);
+
+    h.take(Nanos::ZERO, 1, 1, 4); // 4 @ 1000
+    h.take(Nanos::from_secs(50), 2, 2, 6); // exhausts supply, clears at 500
+
+    assert_eq!(h.state.clearing_price(), Some(Price(500)));
+    assert_eq!(
+        h.state.outcome(key(1)),
+        Some(Outcome::Filled {
+            qty: Qty(4),
+            price: Price(500)
+        }),
+        "I2 violated: the outcomes map kept the pre-clearing price"
+    );
+
+    // Alice's client retries the bid it never saw acknowledged.
+    let events = h.take(Nanos::from_secs(51), 1, 1, 4);
+    assert_eq!(
+        events.as_slice(),
+        &[Event::Duplicate {
+            key: key(1),
+            outcome: Outcome::Filled {
+                qty: Qty(4),
+                price: Price(500)
+            }
+        }]
+    );
+    h.assert_invariants();
+}
+
 #[test]
 fn a_bid_beyond_a_participants_collateral_is_refused() {
     let mut h = Harness::open(100, NO_BATCHING);

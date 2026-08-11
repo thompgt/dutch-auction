@@ -548,6 +548,18 @@ impl AuctionState {
         self.clearing_price = Some(price);
 
         for fill in &mut self.fills {
+            // The outcomes map is what a retry is answered from, so it has to be repriced
+            // alongside the fill it mirrors. Leaving it behind would have every duplicate-key
+            // reply quote the pre-clearing price, which is exactly the disagreement invariant I2
+            // exists to rule out.
+            if let Some(Outcome::Filled {
+                price: quoted_price,
+                ..
+            }) = self.outcomes.get_mut(&fill.key)
+            {
+                *quoted_price = price;
+            }
+
             if fill.price == price {
                 continue;
             }
