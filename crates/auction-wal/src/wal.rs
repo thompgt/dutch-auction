@@ -34,6 +34,14 @@ pub struct WalOptions {
     /// Upper bound on batch size, so a sustained flood still gets flushed promptly instead of
     /// growing a batch forever and turning a throughput problem into a latency problem.
     pub max_batch: usize,
+    /// How many submitted records may be waiting for the writer.
+    ///
+    /// Bounded on purpose. The engine can outrun the disk — that is the whole reason group
+    /// commit exists — and an unbounded queue here would convert a slow `fsync` into unbounded
+    /// memory growth, quietly undoing the bounded ingress upstream. Full means the engine blocks
+    /// in [`crate::Committer::submit`], its own queue backs up, and ingress starts shedding as
+    /// `Busy` at the door, which is where load is supposed to be refused.
+    pub submit_queue_depth: usize,
 }
 
 impl Default for WalOptions {
@@ -42,6 +50,9 @@ impl Default for WalOptions {
             segment_bytes: 64 * 1024 * 1024,
             linger: std::time::Duration::from_micros(500),
             max_batch: 4096,
+            // Matched to the engine's default ingress depth: there is no point being able to
+            // queue more work for the disk than can be accepted at the door in the first place.
+            submit_queue_depth: 16_384,
         }
     }
 }

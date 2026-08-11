@@ -22,6 +22,7 @@ fn options() -> WalOptions {
         segment_bytes: 4 * 1024,
         linger: std::time::Duration::from_micros(200),
         max_batch: 256,
+        ..WalOptions::default()
     }
 }
 

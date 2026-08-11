@@ -122,10 +122,26 @@ pub struct Committer {
 impl Committer {
     /// Queue a record for the next batch. Returns as soon as it is queued — the record is
     /// **not** durable yet, and nothing may be acknowledged on the strength of this call.
+    ///
+    /// Blocks if the queue is full, which is the point: the caller has already applied this
+    /// command and cannot drop it, so the only honest response to a disk that cannot keep up is
+    /// to stop accepting new work until it can. The stall propagates to ingress, which sheds as
+    /// `Busy`. Load is refused at the door or not at all.
     pub fn submit(&self, record: LogRecord) -> Result<()> {
+        if self.tx.is_full() {
+            metrics::counter!("auction_wal_submit_queue_full_total").increment(1);
+        }
         self.tx
             .send(Msg::Record(record))
             .map_err(|_| WalError::CommitterStopped("the commit thread is gone".into()))
+    }
+
+    /// How many records are queued for the writer and not yet durable.
+    ///
+    /// The disk-side twin of the ingress backlog: rising depth here is the engine outrunning
+    /// storage, and it is the number to alarm on before the queue is full and the engine stalls.
+    pub fn queue_depth(&self) -> usize {
+        self.tx.len()
     }
 
     /// Block until `seq` has survived an `fsync`. This is the line invariant I6 draws: an
@@ -157,7 +173,9 @@ impl CommitThread {
     /// Take ownership of `wal` and start batching.
     pub fn spawn(wal: Wal) -> CommitThread {
         let options = *wal.options();
-        let (tx, rx) = crossbeam_channel::unbounded();
+        // Bounded: see `WalOptions::submit_queue_depth`. An unbounded queue here turns a slow
+        // disk into unbounded memory rather than into backpressure the ingress door can act on.
+        let (tx, rx) = crossbeam_channel::bounded(options.submit_queue_depth);
         let watermark = Arc::new(Watermark::new(wal.durable_seq()));
 
         let thread_watermark = Arc::clone(&watermark);
