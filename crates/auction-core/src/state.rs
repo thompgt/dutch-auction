@@ -663,15 +663,31 @@ fn commit(
     c.committed = c.committed.saturating_add(amount);
 }
 
+/// Give back a reservation.
+///
+/// Unlike [`commit`], an overflowing amount here cannot be clamped to `i64::MAX`: subtracting it
+/// would zero the participant's committed balance and so free the collateral backing every other
+/// live bid they hold — an invariant I9 violation dressed up as arithmetic safety. It is
+/// unreachable today because `reserve` refuses any bid whose cost overflows, so nothing that
+/// large is ever committed in the first place. The assertion is there so that stays true: any
+/// future path that releases at a price it did not reserve at fails a test rather than silently
+/// handing out collateral.
 fn release(
     map: &mut BTreeMap<ParticipantId, Collateral>,
     participant: ParticipantId,
     price: Price,
     qty: Qty,
 ) {
-    let amount = price.checked_mul_qty(qty).unwrap_or(i64::MAX);
+    let amount = price.checked_mul_qty(qty);
+    debug_assert!(
+        amount.is_some(),
+        "I9: releasing {qty} at {price} overflows, which would zero {participant}'s balance"
+    );
     let c = map.entry(participant).or_default();
-    c.committed = c.committed.saturating_sub(amount);
+    // In release builds, releasing nothing strands the reservation. That is the conservative
+    // direction: collateral stays committed, which refuses bids, rather than being handed back
+    // twice, which lets a participant exceed the ceiling they posted.
+    c.committed = c.committed.saturating_sub(amount.unwrap_or(0));
 }
 
 /// Allocate `remaining` units across one price level.
