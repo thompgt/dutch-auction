@@ -92,6 +92,12 @@ impl Seq {
 
     /// The next position. Panics on overflow, which at one bid per nanosecond would take
     /// roughly 584 years — if it ever fires, something is very wrong and stopping is correct.
+    ///
+    /// Under the release profile's `panic = "abort"` that stop is immediate, with no unwinding
+    /// and no clean shutdown of the commit thread. That is the intended behaviour and it is
+    /// safe: nothing is acknowledged before its record is on disk (invariant I6), so whatever
+    /// the writer had not yet flushed was never promised to anyone, and `recover()` replays the
+    /// log to exactly the state the acknowledgements described.
     pub fn next(self) -> Seq {
         Seq(self.0.checked_add(1).expect("sequence number overflow"))
     }

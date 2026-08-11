@@ -69,6 +69,13 @@ hdrhistogram = "7"
 opt-level = 3
 lto = "fat"
 codegen-units = 1
+# Abort rather than unwind, deliberately. Every panic this code can raise is an assertion that
+# the auction's own record is inconsistent — a sequence gap in `apply`, a sequence overflow —
+# and unwinding from one means continuing to run a process that has already proved it cannot be
+# trusted with the audit trail. Aborting is safe here precisely because durability does not
+# depend on a clean shutdown: the log is fsynced *before* anything is acknowledged (invariant
+# I6), so the drain the commit thread would have done on the way out has nothing in it that was
+# ever promised to anybody. Recovery replays the log and reaches the same state.
 panic = "abort"
 debug = 1 # keep symbols so production flamegraphs are readable
 
