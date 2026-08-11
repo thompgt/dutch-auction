@@ -127,6 +127,16 @@ pub struct EngineOptions {
     /// magnitude more than the window is wide. Inside this threshold the engine spins with
     /// backoff instead; outside it, it parks, because burning a core to wait out a whole price
     /// step buys nothing.
+    ///
+    /// **This costs a core.** Whenever a deadline is this close, one thread is spinning flat
+    /// out. The default is a quarter of the default batch window, so an auction with an open
+    /// window spins for the last 250 µs of it and parks through the rest; set it *above* the
+    /// batch window and the park branch stops existing entirely, which burns a full core for as
+    /// long as any window is open. That is a defensible trade on dedicated hardware and a
+    /// surprising one everywhere else, so it should be chosen rather than inherited.
+    ///
+    /// On a host whose timers are coarse enough that a 750 µs park overshoots the boundary,
+    /// raise this — the trade is CPU for punctuality, and this is the dial.
     pub spin_ahead: Duration,
     /// Whether an acknowledgement waits for the standby. Ignored when there is no replica.
     pub replication: ReplicationMode,
@@ -141,7 +151,10 @@ impl Default for EngineOptions {
             queue_depth: 16_384,
             wal: WalOptions::default(),
             snapshot_every: 50_000,
-            spin_ahead: Duration::from_millis(2),
+            // A quarter of the default 1 ms batch window. Deliberately below it: at the previous
+            // 2 ms an open window's boundary was always inside the threshold, so the engine never
+            // parked at all and spun a core for every window's entire life.
+            spin_ahead: Duration::from_micros(250),
             replication: ReplicationMode::Async,
             // Generous against the 1.5 ms budget: this is not the latency target, it is the
             // point at which a standby is declared gone. Being trigger-happy here would give up
