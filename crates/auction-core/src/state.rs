@@ -707,24 +707,23 @@ fn allocate(level: &[PendingBid], remaining: u64) -> Vec<u64> {
         .map(|b| (r * u128::from(b.qty.0) / demand) as u64)
         .collect();
 
-    // Flooring leaves fewer than `level.len()` units over. Hand them out in priority order,
-    // skipping anyone already fully allocated, so the rounding loss does not vanish.
+    // Flooring leaves fewer than `level.len()` units over, and because this branch only runs
+    // when demand exceeds supply, every bid's floored share is strictly below its own request —
+    // so nobody is saturated and one pass in priority order places all of them. Re-scanning the
+    // level per unit, as this used to, is quadratic in the level size on the window-flush path
+    // the SLO budgets 2.6 ms for.
     let mut left = remaining - alloc.iter().sum::<u64>();
-    while left > 0 {
-        let mut progressed = false;
-        for (a, b) in alloc.iter_mut().zip(level) {
-            if left == 0 {
-                break;
-            }
-            if *a < b.qty.0 {
-                *a += 1;
-                left -= 1;
-                progressed = true;
-            }
-        }
-        if !progressed {
+    for (a, b) in alloc.iter_mut().zip(level) {
+        if left == 0 {
             break;
         }
+        if *a < b.qty.0 {
+            *a += 1;
+            left -= 1;
+        }
     }
+    // Anything still here would be supply the auction refuses to sell rather than oversells, so
+    // release builds carry on; the assertion is what stops the reasoning above from rotting.
+    debug_assert_eq!(left, 0, "pro-rata remainder was not fully distributed");
     alloc
 }
