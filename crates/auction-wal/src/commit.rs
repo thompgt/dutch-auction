@@ -59,8 +59,23 @@ impl Watermark {
         }
     }
 
+    /// Advance the durability mark to `seq`, if that is forward.
+    ///
+    /// [`Watermark::wait_for`] reads "durable >= mine" as "my record survived the `fsync`", which
+    /// is only sound for a number that never goes down — a mark that moved backwards would park
+    /// waiters who had already been released by a value they were promised was final. Nothing
+    /// today publishes out of order, since one writer thread syncs in sequence order; comparing
+    /// makes that a property of the type rather than of its only caller. A `close` still wins,
+    /// because a stopped writer is not a lower watermark, it is a different state.
     fn publish(&self, seq: Option<Seq>) {
-        *self.state.lock() = State::Live(seq);
+        let mut state = self.state.lock();
+        match &*state {
+            // Already at or past it, or stopped for good. Either way the mark does not move.
+            State::Live(durable) if *durable >= seq => return,
+            State::Closed { .. } => return,
+            State::Live(_) => {}
+        }
+        *state = State::Live(seq);
         self.changed.notify_all();
     }
 

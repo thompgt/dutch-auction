@@ -86,8 +86,19 @@ struct Watermark {
 }
 
 impl Watermark {
+    /// Advance the watermark to `seq`, if that is forward.
+    ///
+    /// [`Watermark::wait_for`] reads "confirmed >= mine" as "my record is replicated", which is
+    /// only true of a number that never goes down. A replica that delivered out of order — a
+    /// reconnecting stream replaying, a future transport with more than one connection — would
+    /// otherwise lower the mark and let an acknowledgement claim a confirmation it does not
+    /// have. Comparing here makes that impossible rather than merely unlikely.
     fn publish(&self, seq: Seq) {
-        *self.seq.lock() = Some(seq);
+        let mut current = self.seq.lock();
+        if current.is_some_and(|confirmed| confirmed >= seq) {
+            return;
+        }
+        *current = Some(seq);
         self.changed.notify_all();
     }
 
