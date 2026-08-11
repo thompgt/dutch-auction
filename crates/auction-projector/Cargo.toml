@@ -6,16 +6,10 @@ rust-version.workspace = true
 license.workspace = true
 description = "Projects the committed event stream into Postgres read models, settlement, and audit exports"
 
+# Phase 5 crate, currently a doc comment. sqlx and the Postgres driver arrive with the code that
+# queries them; until then they are several minutes of compile time per workspace test run in
+# exchange for nothing.
 [dependencies]
 auction-proto.workspace = true
 auction-core.workspace = true
 auction-wal.workspace = true
-serde.workspace = true
-serde_json.workspace = true
-sqlx.workspace = true
-tokio.workspace = true
-tracing.workspace = true
-tracing-subscriber.workspace = true
-thiserror.workspace = true
-anyhow.workspace = true
-clap.workspace = true

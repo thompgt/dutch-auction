@@ -6,23 +6,11 @@ rust-version.workspace = true
 license.workspace = true
 description = "Network edge: WebSocket bid transport, auth, rate limiting, risk pre-checks"
 
+# Phase 4 crate, currently a doc comment. The dependency block it will need — axum, tower-http,
+# tokio, dashmap and the metrics exporter — is deliberately absent until there is code to use it:
+# every `cargo test --workspace` pays to compile whatever is listed here, and making the whole
+# workspace's test cycle slower to reserve names for later is a bad trade.
 [dependencies]
 auction-proto.workspace = true
 auction-core.workspace = true
 auction-engine.workspace = true
-serde.workspace = true
-serde_json.workspace = true
-axum.workspace = true
-tower.workspace = true
-tower-http.workspace = true
-tokio.workspace = true
-dashmap.workspace = true
-parking_lot.workspace = true
-tracing.workspace = true
-tracing-subscriber.workspace = true
-metrics.workspace = true
-metrics-exporter-prometheus.workspace = true
-thiserror.workspace = true
-anyhow.workspace = true
-clap.workspace = true
-uuid.workspace = true
