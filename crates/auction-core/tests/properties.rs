@@ -10,7 +10,7 @@
 
 mod common;
 
-use auction_core::{AuctionState, Command, Event};
+use auction_core::{AuctionState, Command, Event, Outcome};
 use auction_proto::{Nanos, Price, Qty, RejectReason, Status};
 use common::{key, participant, Harness};
 use proptest::prelude::*;
@@ -183,6 +183,68 @@ proptest! {
         if refused_for_exhaustion {
             prop_assert_eq!(h.state.supply_remaining(), Qty::ZERO);
             prop_assert_eq!(h.state.status(), Status::Cleared);
+        }
+    }
+
+    /// I7 — an outcome never regresses from a fill.
+    ///
+    /// The outcomes map is the idempotency record, so it has to be monotone: once a key has been
+    /// allocated units, no later cancellation, rejection or clearing may take them back out of
+    /// the answer a retry gets. Checked after every command, because the failure this guards
+    /// against is transient — a key that reads `Filled`, then `Cancelled`, then never again.
+    #[test]
+    fn an_outcome_never_regresses_from_filled(
+        script in script(),
+        supply in 1u64..200,
+        batched in any::<bool>(),
+    ) {
+        let window = if batched { Nanos::from_millis(1) } else { Nanos::ZERO };
+        let mut h = Harness::open(supply, window);
+        for who in 0..PARTICIPANTS {
+            h.fund(who, COLLATERAL);
+        }
+
+        // key -> the units it had been credited with, and whether it was still a bare `Filled`.
+        let mut filled: std::collections::BTreeMap<u128, Qty> = Default::default();
+        let mut ts = Nanos::ZERO;
+
+        for (i, (gap_ms, op)) in script.iter().enumerate() {
+            ts = Nanos(ts.0 + gap_ms * 1_000_000);
+            let k = i as u128;
+            let clock = h.state.config().price_at(ts);
+            match *op {
+                Op::Take { who, qty, price_error } => {
+                    h.take_expecting(ts, who, k, qty, Price(clock.0.saturating_add(price_error)));
+                }
+                Op::Rest { who, qty, below } => {
+                    h.rest(ts, who, k, qty, clock.0.saturating_sub(below));
+                }
+                Op::Withdraw { who, which } => {
+                    h.apply(ts, Command::CancelResting {
+                        participant: participant(who),
+                        key: key(which),
+                    });
+                }
+                Op::Tick => { h.tick(ts); }
+            }
+
+            for j in 0..script.len() {
+                let credited = match h.state.outcome(key(j as u128)) {
+                    Some(Outcome::Filled { qty, .. })
+                    | Some(Outcome::FilledThenCancelled { qty, .. }) => qty,
+                    _ => Qty::ZERO,
+                };
+                if let Some(before) = filled.get(&(j as u128)) {
+                    prop_assert!(
+                        credited.0 >= before.0,
+                        "I7 violated: key {} was credited {} units and now reports {}",
+                        j, before, credited
+                    );
+                }
+                if !credited.is_zero() {
+                    filled.insert(j as u128, credited);
+                }
+            }
         }
     }
 

@@ -1,0 +1,46 @@
+name: CI
+
+# The property and crash suites are the whole argument that the invariants hold, so they run on
+# every push rather than on demand. Concurrency is per-ref: a force-push supersedes its own run
+# and nobody else's.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # A warning that only shows up in a local build is a warning nobody reads.
+  RUSTFLAGS: -D warnings
+
+jobs:
+  check:
+    name: fmt, clippy, test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # rust-toolchain.toml pins the channel and the components; rustup honours it here, so the
+      # job never names a version the repository does not already declare.
+      - name: Install the pinned toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Formatting
+        run: cargo fmt --all -- --check
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Tests
+        run: cargo test --workspace
+
+      # The benchmarks are part of the acceptance argument in docs/slo.md, so they have to keep
+      # compiling. Running them on a shared runner would measure the runner, not the engine.
+      - name: Benchmarks compile
+        run: cargo bench --workspace --no-run

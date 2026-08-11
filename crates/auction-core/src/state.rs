@@ -272,7 +272,7 @@ impl AuctionState {
                         resting_limit: None,
                     },
                 );
-                self.outcomes.insert(key, Outcome::Queued { qty });
+                self.set_outcome(key, Outcome::Queued { qty });
                 ev.push(Event::Queued {
                     key,
                     participant,
@@ -308,7 +308,7 @@ impl AuctionState {
                     qty,
                     limit,
                 });
-                self.outcomes.insert(key, Outcome::Resting { qty });
+                self.set_outcome(key, Outcome::Resting { qty });
                 ev.push(Event::Rested {
                     key,
                     participant,
@@ -328,7 +328,7 @@ impl AuctionState {
         match self.resting.remove(participant, key) {
             Some(bid) => {
                 release(&mut self.collateral, participant, bid.limit, bid.qty);
-                self.outcomes.insert(key, Outcome::Cancelled);
+                self.set_outcome(key, Outcome::Cancelled);
                 ev.push(Event::RestingCancelled {
                     key,
                     participant,
@@ -502,7 +502,7 @@ impl AuctionState {
             };
             self.next_fill_id += 1;
             self.fills.push(fill);
-            self.outcomes.insert(
+            self.set_outcome(
                 b.key,
                 Outcome::Filled {
                     qty: alloc,
@@ -552,10 +552,16 @@ impl AuctionState {
             // alongside the fill it mirrors. Leaving it behind would have every duplicate-key
             // reply quote the pre-clearing price, which is exactly the disagreement invariant I2
             // exists to rule out.
-            if let Some(Outcome::Filled {
-                price: quoted_price,
-                ..
-            }) = self.outcomes.get_mut(&fill.key)
+            if let Some(
+                Outcome::Filled {
+                    price: quoted_price,
+                    ..
+                }
+                | Outcome::FilledThenCancelled {
+                    price: quoted_price,
+                    ..
+                },
+            ) = self.outcomes.get_mut(&fill.key)
             {
                 *quoted_price = price;
             }
@@ -605,8 +611,44 @@ impl AuctionState {
     }
 
     fn reject(&mut self, key: IdempotencyKey, reason: RejectReason, ev: &mut Events) {
-        self.outcomes.insert(key, Outcome::Rejected { reason });
+        self.set_outcome(key, Outcome::Rejected { reason });
         ev.push(Event::Rejected { key, reason });
+    }
+
+    /// Record what became of `key`, never regressing a fill.
+    ///
+    /// The outcomes map is the idempotency record (invariant I7): it is the only answer a retry
+    /// will ever get, so once units have been allocated against a key nothing may erase them.
+    /// Without this, a resting bid that filled and was then withdrawn — or whose remainder was
+    /// turned away when supply ran out — would report only the last thing that happened to it,
+    /// and a client retrying would be told "cancelled" for a bid that settled.
+    ///
+    /// Today the ladder only ever holds bids that have not filled at all, so the merging arms
+    /// are unreachable. They are here because the property they enforce is one the outcomes map
+    /// must have whatever the matching path does next, not one that happens to hold.
+    fn set_outcome(&mut self, key: IdempotencyKey, outcome: Outcome) {
+        use Outcome::{Cancelled, Filled, FilledThenCancelled, Rejected};
+
+        let merged = match (self.outcomes.get(&key).copied(), outcome) {
+            // Fills accumulate: one bid can be allocated units in more than one window.
+            (
+                Some(Filled { qty: prior, .. }),
+                Filled {
+                    qty: extra,
+                    price: at,
+                },
+            ) => Filled {
+                qty: prior.saturating_add(extra),
+                price: at,
+            },
+            // A withdrawal settles the remainder; it cannot undo what already filled.
+            (Some(Filled { qty, price }), Cancelled) => FilledThenCancelled { qty, price },
+            // Nor can an unfilled remainder being turned away.
+            (Some(prior @ Filled { .. }), Rejected { .. }) => prior,
+            (Some(prior @ FilledThenCancelled { .. }), _) => prior,
+            (_, fresh) => fresh,
+        };
+        self.outcomes.insert(key, merged);
     }
 }
 

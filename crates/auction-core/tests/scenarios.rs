@@ -357,6 +357,88 @@ fn a_resting_bid_can_be_withdrawn_before_the_clock_reaches_it() {
     );
 }
 
+/// Withdrawal cannot rewrite history. Once a resting bid has been allocated units, the outcomes
+/// map has to keep saying so — it is the only answer a retry will ever get (invariant I7).
+#[test]
+fn withdrawing_a_resting_bid_that_already_filled_reports_the_fill_not_the_cancel() {
+    let mut h = Harness::open(10, NO_BATCHING);
+    h.fund(1, 100_000);
+
+    h.rest(Nanos::ZERO, 1, 1, 4, 500);
+    assert_eq!(
+        h.state.outcome(key(1)),
+        Some(Outcome::Resting { qty: Qty(4) })
+    );
+
+    // The clock reaches 500 and the bid fires.
+    h.tick(Nanos::from_secs(50));
+    assert_eq!(h.filled_by(1), 4);
+    assert_eq!(
+        h.state.outcome(key(1)),
+        Some(Outcome::Filled {
+            qty: Qty(4),
+            price: Price(500)
+        })
+    );
+
+    // The participant withdraws it a moment too late.
+    let events = h.apply(
+        Nanos::from_secs(51),
+        Command::CancelResting {
+            participant: participant(1),
+            key: key(1),
+        },
+    );
+
+    assert_eq!(
+        events.as_slice(),
+        &[Event::Duplicate {
+            key: key(1),
+            outcome: Outcome::Filled {
+                qty: Qty(4),
+                price: Price(500)
+            }
+        }],
+        "a bid that filled must never be reported as cancelled"
+    );
+    assert_eq!(h.filled_by(1), 4);
+    h.assert_invariants();
+}
+
+/// The same rule at the other end of the auction: clearing answers the untriggered ladder with
+/// `Unfilled`, and that answer must not land on a key that filled.
+#[test]
+fn clearing_does_not_overwrite_a_fill_when_it_drains_the_ladder() {
+    let mut h = Harness::open(4, NO_BATCHING);
+    h.fund(1, 100_000);
+    h.fund(2, 100_000);
+
+    h.rest(Nanos::ZERO, 1, 1, 4, 800); // fires at 800 and takes the lot
+    h.rest(Nanos::ZERO, 2, 2, 4, 200); // supply is gone before the clock reaches it
+
+    h.tick(Nanos::from_secs(20)); // clock at 800: participant 1 fills, exhausting supply
+
+    assert_eq!(h.filled_by(1), 4);
+    assert_eq!(h.state.status(), Status::Cleared);
+    assert_eq!(h.state.clearing_price(), Some(Price(800)));
+
+    assert_eq!(
+        h.state.outcome(key(1)),
+        Some(Outcome::Filled {
+            qty: Qty(4),
+            price: Price(800)
+        }),
+        "the fill survives the ladder being drained at clearing"
+    );
+    assert_eq!(
+        h.state.outcome(key(2)),
+        Some(Outcome::Rejected {
+            reason: RejectReason::Unfilled
+        })
+    );
+    h.assert_invariants();
+}
+
 #[test]
 fn a_resting_bid_above_the_clock_is_refused_rather_than_filled_as_a_take() {
     let mut h = Harness::open(10, NO_BATCHING);

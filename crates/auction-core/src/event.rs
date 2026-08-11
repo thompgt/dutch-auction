@@ -63,12 +63,18 @@ pub enum Outcome {
     Queued { qty: Qty },
     /// Sitting in the price ladder waiting for the clock.
     Resting { qty: Qty },
-    /// Allocated. `qty` may be less than requested — partial fills are normal.
+    /// Allocated. `qty` may be less than requested — partial fills are normal — and it is
+    /// *cumulative*, because one resting bid can fill across several windows. `price` is the
+    /// most recent window price until clearing rewrites it to the uniform one.
     Filled { qty: Qty, price: Price },
     /// Refused, with the reason.
     Rejected { reason: RejectReason },
     /// Withdrawn by the participant before it filled.
     Cancelled,
+    /// Partly allocated, and then the rest withdrawn. Both halves are true and the participant
+    /// is owed both: being told only "cancelled" for a bid that filled is the worst answer a
+    /// retry could get.
+    FilledThenCancelled { qty: Qty, price: Price },
 }
 
 /// Something that happened, in sequence order.
