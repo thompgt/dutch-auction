@@ -262,6 +262,7 @@ impl Auction {
                         options,
                         replica,
                         last_snapshot: next_seq,
+                        snapshotted_terminal: false,
                     })
                 }
             })
@@ -340,6 +341,8 @@ struct Engine {
     options: EngineOptions,
     replica: Option<Arc<dyn Replica>>,
     last_snapshot: Seq,
+    /// Whether the once-only snapshot of the settled auction has been handed off.
+    snapshotted_terminal: bool,
 }
 
 /// A command applied but not yet durable, waiting on the ack thread.
@@ -436,12 +439,20 @@ fn run(mut e: Engine) {
 
         maybe_snapshot(&mut e, seq);
 
-        if e.state.status().is_terminal() {
-            // Nothing further can change the auction. Snapshot unconditionally so that a
-            // restart of a settled auction is instant, and keep serving: late arrivals still
-            // get a `NotLive` rejection rather than silence (invariant I10).
-            let _ = e.snap_tx.try_send((seq, e.state.clone()));
-            e.last_snapshot = seq;
+        // Nothing further can change the auction, so snapshot once and let a restart of a settled
+        // auction be instant. *Once*: `is_terminal` stays true forever, so cloning per command
+        // here would deep-copy every fill and both maps on the engine thread for every late bid —
+        // an expensive thing to do on demand, and trivially weaponisable after a clear.
+        //
+        // Late arrivals are still served either way: they get a `NotLive` rejection rather than
+        // silence (invariant I10).
+        if e.state.status().is_terminal() && !e.snapshotted_terminal {
+            // Advance only on success, exactly as `maybe_snapshot` does. A full queue means one
+            // is still being written, and the log covers the gap regardless.
+            if e.snap_tx.try_send((seq, e.state.clone())).is_ok() {
+                e.last_snapshot = seq;
+                e.snapshotted_terminal = true;
+            }
         }
     }
 
