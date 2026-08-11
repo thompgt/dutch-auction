@@ -1,5 +1,7 @@
 # dutch-auction
 
+[![CI](https://github.com/thompgt/dutch-auction/actions/workflows/ci.yml/badge.svg)](https://github.com/thompgt/dutch-auction/actions/workflows/ci.yml)
+
 A production-grade **multi-unit descending-price (Dutch) auction** venue, built for tail latency.
 
 Fixed supply, a price that decays on a published schedule, bidders take quantity at the
@@ -49,12 +51,16 @@ crates/
   auction-core/       pure deterministic state machine (no I/O, no clock, no async)
   auction-wal/        append-only log, group commit, snapshots, replay
   auction-engine/     core + wal + sequencer + replication; one thread per auction
-  auction-gateway/    axum: WebSocket + HTTP, auth, rate limit, risk pre-checks
-  auction-projector/  event stream -> Postgres read models, settlement, audit export
-web/                  Next.js + TypeScript frontend
-load/                 thundering-herd load generator + latency analysis
-deploy/               Docker, compose, k8s manifests, Grafana dashboards
+  auction-gateway/    (stub) planned: WebSocket + HTTP edge, auth, rate limit, risk pre-checks
+  auction-projector/  (stub) planned: event stream -> Postgres read models, settlement, audit
+docs/                 the specification: rules, invariants, latency budget, recovery runbook
+load/                 (stub) planned: thundering-herd load generator + latency analysis
 ```
+
+Every directory above exists. The three marked `(stub)` are a doc comment and a `Cargo.toml`
+apiece, filled in by Phases 4, 5 and 7 respectively — the Status table below is the authority on
+what is actually built. The frontend (`web/`, Phase 6) and the deployment manifests (`deploy/`,
+Phase 8) are not in the tree at all yet.
 
 ## Status
 
@@ -97,7 +103,8 @@ through the same `follow()` recovery uses, which is why failover has no code of 
 
 ## Development
 
-Requires a Rust toolchain (stable) and Node 22+.
+Requires a Rust toolchain (stable); `rust-toolchain.toml` pins the channel and the components.
+Node 22+ becomes a requirement in Phase 6, when the frontend arrives.
 
 ```sh
 cargo test --workspace                            # unit, scenario, and property tests
@@ -106,6 +113,15 @@ cargo bench -p auction-wal  --bench commit        # durability latency, see docs
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all
 ```
+
+### CI
+
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs the same commands on every push to
+`main` and every pull request: `cargo fmt --check`, clippy with warnings denied, the whole test
+suite — scenarios, properties, and the crash suite that kills a real process mid-commit — and a
+compile-only pass over the benchmarks. The benchmarks are not *run* there, because a number
+measured on a shared runner is a measurement of the runner; `docs/slo.md` records what they say
+on real hardware.
 
 ### Windows
 

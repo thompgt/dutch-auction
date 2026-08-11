@@ -144,6 +144,11 @@ Latency numbers are meaningless if the auction is wrong, so every load run also 
 
 ## Enforcement
 
-The herd scenario runs in CI at smoke scale on every PR and at full scale nightly. CI fails on a
-p99 regression beyond 20% of the budget line, so drift is caught as it is introduced rather than
-discovered during an auction.
+CI today runs formatting, clippy, the whole test suite — scenarios, properties, and the crash
+suite — and compiles the benchmarks, on every push and pull request. It does not *run* them: a
+latency number measured on a shared runner measures the runner, and the budget above is a claim
+about real hardware.
+
+Planned for Phase 7, once the load generator exists: the herd scenario at smoke scale on every
+PR and at full scale nightly on dedicated hardware, failing on a p99 regression beyond 20% of the
+budget line, so drift is caught as it is introduced rather than discovered during an auction.
