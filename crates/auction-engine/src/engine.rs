@@ -71,8 +71,12 @@ const MAX_PARK: Duration = Duration::from_millis(100);
 ///
 /// The engine thread owns the state and will not share it — that is the single-writer rule, and
 /// handing a lock on `AuctionState` to a thousand websockets would dismantle it. So the engine
-/// publishes this instead: a handful of `Copy` scalars behind an `RwLock`, written after any
-/// command that actually changed something.
+/// publishes this instead: a handful of `Copy` scalars behind an `RwLock`.
+///
+/// It is snapshotted by the engine thread but *written by the ack thread*, once the command it
+/// reflects is durable. Anything else would let a gateway show a `Cleared` a crash could still
+/// erase — the same broken promise as acknowledging early, told to a wider audience (invariant
+/// I6).
 ///
 /// The write is uncontended and costs tens of nanoseconds against a 0.1 ms budget line, and it is
 /// skipped entirely for commands that produced no events — which is most ticks.
@@ -228,7 +232,8 @@ impl Auction {
                 let committer = committer.clone();
                 let events = events.clone();
                 let replica = replica.clone();
-                move || run_acks(ack_rx, committer, events, replica, options)
+                let view = Arc::clone(&view);
+                move || run_acks(ack_rx, committer, events, view, replica, options)
             })
             .expect("spawning the ack thread");
 
@@ -244,11 +249,9 @@ impl Auction {
             .name("auction-engine".into())
             .spawn({
                 let stop = Arc::clone(&stop);
-                let view = Arc::clone(&view);
                 move || {
                     run(Engine {
                         state,
-                        view,
                         next_seq,
                         clock,
                         rx,
@@ -327,8 +330,6 @@ impl Drop for Auction {
 /// in the type system rather than in a comment.
 struct Engine {
     state: AuctionState,
-    /// Published for readers that must not be allowed near the state itself.
-    view: Arc<RwLock<View>>,
     next_seq: Seq,
     clock: Clock,
     rx: Receiver<Submission>,
@@ -346,6 +347,9 @@ struct Pending {
     seq: Seq,
     events: Events,
     reply: Option<oneshot::Sender<Ack>>,
+    /// The state as of this command, if it changed anything — published by the ack thread once
+    /// this sequence is durable. `None` when the command produced no events, which is most ticks.
+    view: Option<View>,
 }
 
 /// What the engine does next.
@@ -406,18 +410,23 @@ fn run(mut e: Engine) {
 
         metrics::counter!("auction_commands_total").increment(1);
 
-        // Republish only when something actually changed. Most ticks find an empty window and
-        // produce nothing, and taking a write lock to publish an identical view would be paying
-        // for the quiet case to make the busy one no faster.
-        if !events.is_empty() {
-            *e.view.write() = View::of(&e.state);
-        }
+        // Snapshot the view here but do not publish it here. The ack path waits for the `fsync`
+        // before telling anyone anything (invariant I6), and the view is read by exactly the same
+        // audience — a gateway showing `Cleared` for a command a crash would erase is the same
+        // broken promise as acknowledging it. So the view travels with the command and the ack
+        // thread publishes it, in sequence order, on the durable side of the disk.
+        //
+        // Only when something actually changed: most ticks find an empty window and produce
+        // nothing, and republishing an identical view would pay for the quiet case to make the
+        // busy one no faster.
+        let view = (!events.is_empty()).then(|| View::of(&e.state));
 
         if e.ack_tx
             .send(Pending {
                 seq,
                 events,
                 reply: submission.reply,
+                view,
             })
             .is_err()
         {
@@ -575,6 +584,7 @@ fn run_acks(
     rx: Receiver<Pending>,
     committer: Committer,
     events: broadcast::Sender<Sequenced>,
+    view: Arc<RwLock<View>>,
     replica: Option<Arc<dyn Replica>>,
     options: EngineOptions,
 ) {
@@ -611,6 +621,13 @@ fn run_acks(
                 metrics::counter!("auction_replica_lost_total").increment(1);
                 replica_lost = true;
             }
+        }
+
+        // Durable, and replicated if that was asked for. Only now may anyone be shown this
+        // state — the view is published from here, in sequence order, for the same reason the
+        // reply below is.
+        if let Some(published) = pending.view {
+            *view.write() = published;
         }
 
         // Broadcast before replying. The public record of what happened should not lag the
